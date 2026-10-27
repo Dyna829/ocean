@@ -1,8 +1,10 @@
 # AI session evidence
 
-Two AI sessions produced the build, both DeepSeek Harness (DSH) with the
+Three AI sessions produced this submission, all DeepSeek Harness (DSH) with the
 `deepseek-flash` model on 2026-10-27 (Asia/Singapore): the main build session
-(12:24–14:07) and a short follow-up review of idempotency edge cases (13:30–13:32).
+(12:24–14:07), a short follow-up review of idempotency edge cases (13:30–13:32), and a
+final packaging session (14:07–14:27) that added the written answers and refreshed this
+evidence.
 
 | File | What it is |
 |---|---|
@@ -10,6 +12,8 @@ Two AI sessions produced the build, both DeepSeek Harness (DSH) with the
 | `dsh-session-e45b7148.jsonl` | main session, decompressed for review |
 | `dsh-session-1b259789.native.jsonl.zstd` | follow-up review session, untouched log |
 | `dsh-session-1b259789.jsonl` | follow-up review session, decompressed |
+| `dsh-session-d220c9f4.native.jsonl.zstd` | final packaging session, untouched log |
+| `dsh-session-d220c9f4.jsonl` | final packaging session, decompressed |
 | `session-index.csv` | one row per session: model, window, export, purpose, commits |
 | `decision-log.md` | accepted / corrected / tradeoff decisions with evidence |
 | `completeness-declaration.md` | tools used, export limitations, Section 6 boundary |
@@ -21,7 +25,7 @@ The decompressed copy was produced with:
 
 ```bash
 BASE=~/.dsh/sessions/--Users-dyna-Documents-Job-ocean--
-for ID in e45b7148-1eaf-41d9-b867-396867dcceda 1b259789-6a30-4bb2-b86b-5a4c6b690b06; do
+for ID in e45b7148-1eaf-41d9-b867-396867dcceda 1b259789-6a30-4bb2-b86b-5a4c6b690b06 d220c9f4-8fb6-46a0-bb0e-1a92b104b7ac; do
   SHORT=${ID%%-*}
   zstd -d -c "$BASE/session-$ID/session.v4.jsonl.zstd" > "ai/sessions/dsh-session-$SHORT.jsonl"
   cp "$BASE/session-$ID/session.v4.jsonl.zstd" "ai/sessions/dsh-session-$SHORT.native.jsonl.zstd"
