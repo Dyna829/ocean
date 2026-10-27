@@ -56,9 +56,10 @@ evidence" file was needed.
 ## Section 6 — no-AI confirmation
 
 Section 6 (`written-answers.md`) is the only part of the assessment that must be produced
-without AI. It was **not** part of this session: the assistant was instructed not to draft,
-outline, summarise, translate, rephrase, proofread, or improve those answers, and every AI
-instruction file in the repository repeats that boundary.
+without AI. It was **not** part of this session: the boundary comes from
+`docs/briefing.pdf` §6 and was restated to the assistant at the start of this session, which
+declined to draft, outline, summarise, translate, rephrase, proofread, or improve those
+answers.
 
 - [ ] Candidate: confirm before submission that `written-answers.md` was written by you
       alone, without AI assistance of any kind.
