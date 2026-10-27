@@ -1,2 +1,2 @@
 session_id,tool,model,started_at,ended_at,export_file,purpose,related_commits
-session-e45b7148-1eaf-41d9-b867-396867dcceda,DeepSeek Harness (dsh),deepseek-flash,2026-10-27T12:24:25+08:00,2026-10-27T12:48:36+08:00,ai/sessions/dsh-session-e45b7148.jsonl,"Design, backend, frontend, acceptance tests, docs, evidence packaging","17e553e 0f6674e b94ac80 48c2938 6b05ddb ebb8485 9701154"
+session-e45b7148-1eaf-41d9-b867-396867dcceda,DeepSeek Harness (dsh),deepseek-flash,2026-10-27T12:24:25+08:00,2026-10-27T12:53:59+08:00,ai/sessions/dsh-session-e45b7148.jsonl,"Design, backend, frontend, acceptance tests, docs, evidence packaging, AGENTS.md rewrite","17e553e 0f6674e b94ac80 48c2938 6b05ddb ebb8485 9701154 e718e02"
