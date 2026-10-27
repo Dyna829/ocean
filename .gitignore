@@ -1,0 +1,18 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Node
+web/node_modules/
+web/dist/
+
+# Runtime data (regenerate with ./start.sh or scripts/generate_large.py)
+data/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
