@@ -285,8 +285,9 @@ the operation id.
 
 ## 9. AI evidence
 
-* `ai/sessions/` — native DeepSeek Harness JSONL export(s) for this build, including
-  prompts, responses, tool calls, commands, and timestamps.
+* `ai/sessions/` — native JSONL exports for this build: three DeepSeek Harness sessions
+  (`dsh-session-*.jsonl`) and two MiniMax Code sessions (`mavis-session-*.native.jsonl`),
+  including prompts, responses, tool calls, commands, and timestamps.
 * `ai/session-index.csv` — one row per session.
 * `ai/decision-log.md` — accepted suggestion, rejected/corrected suggestion, scope
   tradeoff, each with session id, verification evidence, and commit.

@@ -414,8 +414,10 @@ written-answers.md   Section 6 written answers (candidate, no AI)
 
 ## 11. AI assistance and evidence
 
-The build was AI-assisted. All interactive sessions, decisions, and limitations are in
-[`ai/`](ai/):
+The build was AI-assisted, with two tools: **DeepSeek Harness** (`deepseek-flash`) for the build
+itself and **MiniMax Code** (`minimax/MiniMax-M3.1-Flash`) for an independent review of the
+finished submission and for the final evidence refresh. All interactive sessions, decisions,
+and limitations are in [`ai/`](ai/):
 
 - `ai/sessions/` — native session exports (JSONL) including prompts, tool calls, commands,
   errors, and timestamps

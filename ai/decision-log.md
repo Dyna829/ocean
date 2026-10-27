@@ -1,12 +1,15 @@
 # Decision log
 
 Material decisions made while building this submission, including the AI suggestions that
-were accepted, corrected, and the scope tradeoffs taken. They came from two DeepSeek
-Harness sessions, both model `deepseek-flash`: the main build session
-(`session-e45b7148-1eaf-41d9-b867-396867dcceda`, 12:24–14:07 +08:00) and a short follow-up
-review (`session-1b259789-6a30-4bb2-b86b-5a4c6b690b06`, 13:30–13:32 +08:00). D2–D8 are from
-the main session; D1's reason-hash refinement is from the follow-up. Exports are in
-`ai/sessions/`.
+were accepted, corrected, and the scope tradeoffs taken. They came from five sessions
+across two tools: three DeepSeek Harness sessions on `deepseek-flash` — the main build
+session (`session-e45b7148-1eaf-41d9-b867-396867dcceda`, 12:24–14:07 +08:00) and a short
+follow-up review (`session-1b259789-6a30-4bb2-b86b-5a4c6b690b06`, 13:30–13:32 +08:00) —
+and two MiniMax Code sessions on `minimax/MiniMax-M3.1-Flash` — an independent candidate
+review (`mvs_0440be7bad514234a70dae0a49f82fc8`, 12:57–13:19 +08:00) and the final evidence
+refresh (`mvs_06fd271c43ec45a891939de7fae24ce5`, 13:30– +08:00). D2–D8 are from the main
+DeepSeek session; D1's reason-hash refinement is from the follow-up; D9–D10 are from the
+MiniMax Code review; D11 is from the evidence refresh. Exports are in `ai/sessions/`.
 
 Time zone for every timestamp below: Asia/Singapore (+08:00), 2026-10-27.
 
@@ -20,6 +23,9 @@ Time zone for every timestamp below: Asia/Singapore (+08:00), 2026-10-27.
 | D6 | tradeoff | Pinned Vite 7 / TypeScript 5.9 instead of the newest majors | `session-e45b7148` | `48c2938` |
 | D7 | accepted | Leveled structured logging with a shared request id | `session-e45b7148` | `dfbeee4` |
 | D8 | corrected | Export was super-linear at 1M rows; two-step keyset fixed it | `session-e45b7148` | `3db3bda` |
+| D9 | accepted | The "Acting as" switcher is brief-mandated, not an invented feature | `mvs_0440be7b` | `none (review only)` |
+| D10 | corrected | The review's own smoke test wrote into the demo database, then was reset | `mvs_0440be7b` | `none (review only)` |
+| D11 | accepted | Declare every AI session, including the one the evidence pack had missed | `mvs_06fd271c` | evidence commits |
 
 ---
 
@@ -219,3 +225,81 @@ commit.
 
 **Cost.** The queries are now tied to index names in `app/schema.sql`; adding or renaming an
 index means updating `SORT_INDEXES`. Documented in `DESIGN.md` §5.4.
+
+---
+
+## D9 — Accepted: the "Acting as" switcher is required by the brief, not invented
+
+**Context.** During the candidate review the question was whether the tenant switcher in the
+header was actually in the requirements or a convenience the build had added. That distinction
+matters: a switcher that lets the browser pick a tenant would be a hole in the A1 isolation
+model.
+
+**Decision.** Keep the switcher, because the brief asks for it — but verify that it is a
+*display affordance over an actor*, not a tenant selector.
+
+**Brief text.** Page 2, "Actor context": "No login UI is needed. Seed one admin per tenant and
+identify the actor with a header or token." Page 3, "Required Product Scope", the certificate
+list row: "**Select an actor**, search by learner name or serial number, paginate, and sort."
+"Select an actor" is the first action of the list workflow, listed alongside search, paging,
+and sorting. The two statements only look contradictory if read apart: "no login UI" rules out
+a credential form, "select an actor" requires a way to choose who you are.
+
+**Verification.** The switcher sets the actor, never the tenant:
+
+- `web/src/api.ts:35` — `actorHeaders()` sends `X-Actor-Email`; `web/src/api.ts:121-124` —
+  `listQuery()` sends only `q`, `sort`, `dir`, `page`, `pageSize`.
+- A grep over `web/src/` finds the word `tenant` only in display contexts —
+  `me.tenant.name`, `me.tenant.timezone`, the "Multi-tenant training platform" subtitle, the
+  "Issued (tenant local)" labels, and the TypeScript response types. It appears in no query
+  parameter, request body, or header.
+- The tenant is resolved server-side from the `admins` row (`app/auth.py`), so the browser
+  cannot widen its own scope.
+- Live check on the running server: as Bob the list, export, and course picker contained only
+  West rows, and an East certificate id returned `404 certificate_not_found` — the same body
+  a missing certificate returns.
+
+## D10 — Corrected: the review's own smoke test wrote into the demo database
+
+**What happened.** The live smoke test on `:3300` included a real bulk-issue call
+(`Idempotency-Key: pdf-check-1`, `course_east_safety`) to confirm that a replay returns the
+stored body. That was a write against the working demo dataset: it issued 2 certificates
+(Maya Chen, Priya Nair), 2 audit events, and left a row in `idempotency_keys`. The assistant
+noticed it while checking the effect of its own test on the data and did not leave it there.
+
+**Correction.** `.venv/bin/python -m app.seed --reset` rebuilt the demo fixture, and the
+server was restarted on the clean data. The verification output:
+
+```
+reset: True certificates: 14
+certificates=14
+idempotency_keys=0
+audit_events=15
+```
+
+That is exactly the seeded state: 14 certificates (East 13 + West 1) and 15 audit events
+(14 issuances + 1 revocation), with the idempotency table empty and the serials continuous
+from `CERT-EAST-2026-000001`. The SPA was re-checked afterwards.
+
+**Why this is recorded.** `data/` is git-ignored, so the committed repository was never
+affected — the risk was to the demo dataset a reviewer runs from a clean checkout. The rule
+applied here is the candidate's own: test data you created, you clean up.
+
+## D11 — Accepted: declare every AI session, including the one the evidence pack had missed
+
+**Context.** The evidence pack shipped with a statement that no AI tool other than DeepSeek
+Harness had been used. That statement was no longer true. A MiniMax Code session
+(`mvs_0440be7b…`, 12:57–13:19 +08:00) ran concurrently with the DeepSeek Harness build
+session, in the same workspace, and had reviewed and exercised the finished submission. It
+was absent from `ai/session-index.csv`, from the tools table, and from the decision log.
+
+**Decision.** Export both MiniMax Code sessions natively, add a row per session to the index,
+correct the tools table and the export-limitations list, and state the gap in the declaration
+itself — rather than quietly adding two files and leaving the old claim standing.
+
+**Verification.** The gap was found by reading the local session store
+(`~/.minimax/v2/sessions/2026/10/27/`), not from recollection: the session directory names
+encode the session id in base64, and `ai/sessions/mavis-session-0440be7b.native.jsonl` is the
+untouched `messages.jsonl` from that session. Each exported file was copied with `sha256sum`
+checked against its source. `ai/session-index.csv` now has one row per session for all five,
+and `ai/completeness-declaration.md` lists both tools with their export limitations.

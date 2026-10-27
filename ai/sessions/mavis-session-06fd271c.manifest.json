@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "sessionId": "mvs_06fd271c43ec45a891939de7fae24ce5",
+  "createdAtMs": 1793079039500,
+  "updatedAtMs": 1793079039500,
+  "source": "local-runtime",
+  "layout": "v2-final-dated-session",
+  "paths": {
+    "sessionDir": "/Users/dyna/.minimax/v2/sessions/2026/10/27/05-30-39-500-session_bXZzXzA2ZmQyNzFjNDNlYzQ1YTg5MTkzOWRlN2ZhZTI0Y2U1",
+    "ledger": "/Users/dyna/.minimax/v2/sessions/2026/10/27/05-30-39-500-session_bXZzXzA2ZmQyNzFjNDNlYzQ1YTg5MTkzOWRlN2ZhZTI0Y2U1/ledger.jsonl",
+    "display": "/Users/dyna/.minimax/v2/sessions/2026/10/27/05-30-39-500-session_bXZzXzA2ZmQyNzFjNDNlYzQ1YTg5MTkzOWRlN2ZhZTI0Y2U1/display.jsonl",
+    "snapshot": "/Users/dyna/.minimax/v2/sessions/2026/10/27/05-30-39-500-session_bXZzXzA2ZmQyNzFjNDNlYzQ1YTg5MTkzOWRlN2ZhZTI0Y2U1/snapshot.json",
+    "reports": "/Users/dyna/.minimax/v2/sessions/2026/10/27/05-30-39-500-session_bXZzXzA2ZmQyNzFjNDNlYzQ1YTg5MTkzOWRlN2ZhZTI0Y2U1/reports",
+    "messages": "/Users/dyna/.minimax/v2/sessions/2026/10/27/05-30-39-500-session_bXZzXzA2ZmQyNzFjNDNlYzQ1YTg5MTkzOWRlN2ZhZTI0Y2U1/messages.jsonl"
+  }
+}
