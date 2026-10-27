@@ -1,0 +1,12 @@
+{
+  "name": "certificate-admin-console",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Multi-tenant certificate admin console (Ocean AI Labs technical assessment)",
+  "scripts": {
+    "start": "./start.sh",
+    "verify": "./verify.sh",
+    "seed": ".venv/bin/python -m app.seed --reset",
+    "test": ".venv/bin/python -m pytest tests -q"
+  }
+}
