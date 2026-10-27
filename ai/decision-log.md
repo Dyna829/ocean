@@ -16,6 +16,7 @@ Time zone for every timestamp below: Asia/Singapore (+08:00), 2026-10-27.
 | D5 | tradeoff | SQLite single-writer + synchronous bulk issue, no queue | `b94ac80`, `0f6674e` |
 | D6 | tradeoff | Pinned Vite 7 / TypeScript 5.9 instead of the newest majors | `48c2938` |
 | D7 | accepted | Leveled structured logging with a shared request id | `dfbeee4` |
+| D8 | corrected | Export was super-linear at 1M rows; two-step keyset fixed it | `3db3bda` |
 
 ---
 
@@ -42,8 +43,8 @@ correct behaviour for a transient failure.
 A2 test fires six concurrent requests with one key and asserts exactly one
 `operationId`, one `Idempotency-Replayed: false`, five `true`, `+2` certificates and `+2`
 audit events; A3 asserts `409 idempotency_key_reuse` with certificate and audit counts
-unchanged, and that the original result is still replayable. Both passed in
-`./verify.sh` (7 passed, 4.36 s).
+unchanged, and that the original result is still replayable. Two further A3 tests cover
+the audit `reason` becoming part of the hash (different reason → 409; blank reason replays).
 
 ## D2 — Accepted: snapshot names on the certificate and stream exports in keyset batches
 
@@ -178,3 +179,35 @@ happened (INFO), why it was slow (WARNING), and what broke (ERROR + traceback).
 **Cost.** One INFO line per request (accepted: it replaces Uvicorn's access log, which
 `start.sh` now disables). Client logs stay in the browser console — no shipping endpoint —
 which is recorded under known defects in `README.md` §10.
+
+---
+
+## D8 — Corrected: the export was super-linear at 1M rows
+
+**What the boundary test showed.** 100,000 rows exported in 0.97 s, 300,000 in 6.09 s, and
+1,000,000 in **61.7 s** — roughly 6x and 63x for 3x and 10x the data. The 60 s budget in A6
+applies to 100k rows, so acceptance was never at risk, but the curve showed the export would
+not survive a larger tenant.
+
+**Root cause.** Two compounding effects:
+
+1. The snapshot condition `c.seq <= ?` made the planner choose the `(tenant_id, seq)` index
+   and then build a temp B-tree to satisfy `ORDER BY learner_name, id` for every batch —
+   a full sort of the tenant's rows per 2,000-row page.
+2. Even with the right index, SQLite does not push a row-value comparison
+   `(learner_name COLLATE NOCASE, id) > (?, ?)` into an index seek when the key has many
+   duplicates, so each batch restarted at the beginning of the tenant's index.
+
+**Fix.** `export_batch` now does two index seeks per page behind an explicit `INDEXED BY`
+hint: first drain the current key with `key = ? AND id > ?`, then jump to `key > ?`. The
+tiebreaker direction now follows the requested direction, which makes the order a pure
+index order for both ASC and DESC.
+
+**Verification.** 100k **0.24 s**, 300k **1.27 s**, 1M **3.62 s**; a list request during the
+1M export returns in 24 ms; `tracemalloc` peak is ~3.5 MB for a 70 MB CSV. The A6 test caught
+the intermediate version of this change that ordered a batch by `id` instead of by key and
+silently skipped 36,100 rows — it asserts the exact row count, so the bug never reached a
+commit.
+
+**Cost.** The queries are now tied to index names in `app/schema.sql`; adding or renaming an
+index means updating `SORT_INDEXES`. Documented in `DESIGN.md` §5.4.

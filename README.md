@@ -42,7 +42,7 @@ git-ignored.
 
 ```bash
 ./verify.sh
-# => 15 passed  (A1–A7 + 8 logging tests)  + TypeScript type check
+# => 17 passed  (A1–A7, reason-hash, logging)  + TypeScript type check
 ```
 
 `verify.sh` installs `requirements-dev.txt`, runs `pytest tests/`, then runs `tsc --noEmit`
@@ -159,6 +159,11 @@ curl -s -X POST localhost:8000/api/certificates/bulk-issue \
 No second operation runs and the stored result for `demo-a2` is untouched (retry the A2
 command and you still get the Fire Safety outcome).
 
+`reason` is part of that payload: the same course with a different reason is the same
+`409 idempotency_key_reuse`, so a second reason is refused instead of being silently
+dropped from the audit trail. A blank reason (`null`, `""`, whitespace) counts as no
+reason.
+
 ### A4 — learner outcomes
 
 ```bash
@@ -201,10 +206,34 @@ time curl -s -H 'X-Actor-Email: alice@east.test' -o /tmp/large.csv \
 wc -l /tmp/large.csv                       # 100014 (header + 100,013 East rows)
 ```
 
-Measured on this machine: **~1.0 s**, 7.0 MB CSV. While the export stream is open, a list
-request still returns in **~11 ms** (see `tests/test_a6_export.py`, which asserts both the
+Measured on this machine: **~0.24 s**, 7.0 MB CSV. While the export stream is open, a list
+request still returns in **~4 ms** (see `tests/test_a6_export.py`, which asserts both the
 60 s budget and the concurrent list). Repeated exports are byte-identical, including rows
-with equal learner names / timestamps — the order is `sort key, certificate id`.
+with equal learner names / timestamps — the order is `sort key, certificate id` (both in
+the sort direction).
+
+**Capacity beyond the brief (same machine, SQLite file):**
+
+| Rows | Export | CSV size | List during export | Deep page | Search |
+|---|---|---|---|---|---|
+| 100,000 | 0.24 s | 7.0 MB | 3.9 ms | 6 ms | 17 ms |
+| 300,000 | 1.27 s | 21 MB | 10 ms | 15 ms | 43 ms |
+| 1,000,000 | 3.62 s | 70 MB | 24 ms | 48 ms | 142 ms |
+
+Streaming memory stays flat: `tracemalloc` peak was ~5 MB for 100k rows and ~3.5 MB for 1M.
+Bulk issue, the only synchronous write path, scales linearly and blocks other *writers*
+(reads stay available):
+
+| Learners | Duration | Response | Revoke waiting during the issue |
+|---|---|---|---|
+| 1,000 | 0.08 s | 165 KB | — |
+| 10,000 | 0.67 s | 1.7 MB | — |
+| 20,000 | 1.4 s | 3.3 MB | — |
+| 50,000 | 4.0 s | 8.6 MB | 3.7 s |
+
+The first version of this export was 61.7 s at 1M rows (super-linear); the two-step keyset
+and index hint in `export_batch` fixed it. `tests/test_a6_export.py` caught the intermediate
+bug where rows were silently skipped, because it asserts the exact row count.
 
 ### A7 — revocation audit
 
@@ -255,8 +284,10 @@ idempotency key.
   race.
 - **Timezone** — timestamps are UTC; `issue_date_local` is persisted at issuance for
   sorting and CSV, while display strings are derived from the tenant's IANA zone.
-- **Streaming export** — async generator over 2,000-row keyset pages executed in the
-  worker-thread pool, with a `max(seq)` snapshot horizon; the event loop is never blocked.
+- **Streaming export** — async generator over 2,000-row pages fetched in the worker-thread
+  pool, with a `max(seq)` snapshot horizon. Each page is two index seeks (drain the current
+  sort key, then jump to the next) behind an explicit `INDEXED BY` hint; the event loop is
+  never blocked.
 - **Audit integrity** — issuance and revocation events are inserted in the same
   transaction as the state change, and `unique(certificate_id, action)` makes duplicates
   physically impossible.
@@ -354,9 +385,9 @@ DESIGN.md            data model, API contract, tradeoffs
 
 1. **No authentication.** The actor header is a demo affordance; anyone can spoof it.
    Out of scope per the brief, but it is the first thing to fix for production.
-2. **SQLite single-writer.** Concurrent bulk issues serialise on the write lock. At demo
-   scale this is invisible; at thousands of eligibilities the request should become a
-   queued job.
+2. **SQLite single-writer.** Concurrent bulk issues serialise on the write lock, and a
+   revocation issued during a 50k-learner bulk issue waited 3.7 s for the commit (reads are
+   unaffected). At that cohort size the request should become a queued job.
 3. **Export is not a full MVCC snapshot.** The `max(seq)` horizon hides certificates
    issued mid-export, but a revocation committed between two batches can still show up in
    a later batch. Acceptable for an admin download; a materialised snapshot would fix it.
@@ -364,9 +395,9 @@ DESIGN.md            data model, API contract, tradeoffs
 5. **No automated UI tests.** The backend is covered by pytest; the UI was verified
    manually (Chrome screenshots in `docs/screenshots/`) and against the same scenarios.
    Playwright coverage would be the next investment.
-6. **OFFSET pagination.** Deep pages on the 100k dataset measured ~0.10–0.15 s locally
-   (including the `COUNT(*)`), so it is acceptable here, but keyset pagination would be the
-   correct next step for very large offsets.
+6. **OFFSET pagination.** Deep pages measured 6 ms (100k) / 15 ms (300k) / 48 ms (1M) and a
+   page far past the end 13 ms / 38 ms / 128 ms, so it is acceptable here; keyset pagination
+   is still the correct next step for very large offsets.
 7. **Revoked certificates cannot be reissued** — the unique
    `(tenant, course, learner)` constraint keeps one credential per learner/course. This is
    a documented product rule, not an oversight; a reissue flow would need a new serial

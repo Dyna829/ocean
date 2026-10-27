@@ -163,11 +163,17 @@ COMMIT
 ```
 
 * The whole operation and the key row commit atomically: a crash leaves neither a partial
-  batch nor a poisoned key.
+  batch nor a poisoned key. The row is only ever inserted as `SUCCEEDED`, so the
+  `idempotency_key_in_progress` branch is unreachable today; it exists for the async
+  variant (README §9) and would then need stale-row recovery, or a crashed job wedges its
+  key forever.
 * Concurrent identical requests serialise on SQLite's write lock, then read the committed
   row and replay the same bytes. Sequential requests take the same path.
-* The request hash is `sha256(endpoint + canonical_json(body))`; only `courseId` is
-  material today, so a second course with the same key is `409` (A3).
+* The request hash is `sha256(endpoint + canonical_json(request))` over `courseId` and,
+  when given, `reason`: the audit reason is part of the payload, so the same course with a
+  different reason is `409` (A3) rather than a replay that silently drops it. A blank
+  reason canonicalises to "no reason", and that absent-reason form is unchanged from the
+  pre-`reason` hash, so keys stored before this rule still replay.
 * Failure (500) rolls back the transaction, so no key is stored and a retry is a fresh
   attempt — correct for a transient error.
 
@@ -184,11 +190,18 @@ COMMIT
 
 ### 5.4 Export (A6)
 
-* `StreamingResponse` over an async generator; batches of 2,000 rows fetched with keyset
-  pagination `(sortKey, id) > (lastKey, lastId)` in a worker thread, so each batch holds the
-  event loop only for the `await`.
-* Order: requested sort key, then `id` — a total order, so equal sort keys appear in the
-  same relative order on every export.
+* `StreamingResponse` over an async generator; batches of 2,000 rows fetched in a worker
+  thread, so each batch holds the event loop only for the `await`.
+* Keyset paging is **two index seeks per batch**: first drain the current sort key with
+  `key = ? AND id > ?`, then jump to `key > ?`. A single row-value comparison is not pushed
+  into the index when the key is a collated expression with many duplicates, which made the
+  first implementation scan from the start of the tenant's index on every batch — 61.7 s for
+  1M rows. The two-step form is linear (3.6 s for 1M). Each query names its index with
+  `INDEXED BY` so the residual search/horizon filter cannot divert the planner into a temp
+  sort.
+* Order: requested sort key, then `id`, both in the requested direction — a total order, so
+  equal sort keys appear in the same relative order on every export. List and export share
+  the same ordering rule.
 * Snapshot horizon: `max(seq)` captured at export start; rows issued mid-export are not
   appended to the stream.
 * CSV columns: `learner_name,course_title,serial_number,issue_date` (RFC 4180 quoting, UTF-8,
