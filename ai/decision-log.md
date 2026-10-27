@@ -1,0 +1,136 @@
+# Decision log
+
+Material decisions made while building this submission, including the AI suggestions that
+were accepted, corrected, and the scope tradeoffs taken. All work happened in a single
+DeepSeek Harness session (`session-e45b7148-1eaf-41d9-b867-396867dcceda`, model
+`deepseek-flash`), exported to `ai/sessions/dsh-session-e45b7148.jsonl`.
+
+Time zone for every timestamp below: Asia/Singapore (+08:00), 2026-10-27.
+
+| # | Type | Decision | Commits |
+|---|---|---|---|
+| D1 | accepted | Database-enforced idempotency instead of an in-process lock | `b94ac80`, `6b05ddb` |
+| D2 | accepted | Name snapshots + keyset streaming export | `b94ac80`, `6b05ddb` |
+| D3 | corrected | Async generator iterated synchronously in the A6 test | `6b05ddb` |
+| D4 | corrected | `start.sh` assumed bash 4 empty-array semantics | `ebb8485` |
+| D5 | tradeoff | SQLite single-writer + synchronous bulk issue, no queue | `b94ac80`, `0f6674e` |
+| D6 | tradeoff | Pinned Vite 7 / TypeScript 5.9 instead of the newest majors | `48c2938` |
+
+---
+
+## D1 — Accepted: enforce idempotency in the database, not in process memory
+
+**Context.** A2 requires the same `Idempotency-Key` to be one logical operation for
+sequential *and* concurrent callers, returning identical outcomes and creating no extra
+certificates or audit events. A3 requires a `409` when the key is reused with a different
+payload.
+
+**Proposal accepted.** The AI proposed an `idempotency_keys(tenant_id, key, request_hash,
+response_json, ...)` row written in the *same* `BEGIN IMMEDIATE` transaction as the
+issuance, plus `unique(tenant_id, course_id, learner_id)` on certificates and
+`unique(certificate_id, action)` on audit events as the last line of defence
+(`app/schema.sql:66`, `app/schema.sql:96`, `app/db.py:60`).
+
+**Why this was accepted.** It removes the need for an in-process lock or queue: SQLite's
+write lock serialises the concurrent callers, the loser of the race reads the committed row
+and replays it, a crash rolls back both the certificates and the key row, and A3 becomes a
+cheap hash comparison before any write. A retry after a `500` re-executes, which is the
+correct behaviour for a transient failure.
+
+**Verification.** `pytest tests/test_a2_idempotency.py tests/test_a3_key_misuse.py` — the
+A2 test fires six concurrent requests with one key and asserts exactly one
+`operationId`, one `Idempotency-Replayed: false`, five `true`, `+2` certificates and `+2`
+audit events; A3 asserts `409 idempotency_key_reuse` with certificate and audit counts
+unchanged, and that the original result is still replayable. Both passed in
+`./verify.sh` (7 passed, 4.36 s).
+
+## D2 — Accepted: snapshot names on the certificate and stream exports in keyset batches
+
+**Context.** A6 needs 100,000 rows in under 60 s while a certificate list request stays
+responsive, and rows with equal sort keys must keep their relative order across exports.
+
+**Proposal accepted.** Persist `learner_name` and `course_title` on each certificate at
+issuance, index them together with `id`, and stream the CSV by fetching 2,000-row keyset
+pages — `(sort_key, id) > (last_key, last_id)` — inside the worker-thread pool
+(`app/services/certificates.py:504`, `app/routers/api.py:69`). Exports are bounded by a
+`max(seq)` horizon captured at the start. Every `ORDER BY` ends in `id ASC`, so ties are
+deterministic.
+
+**Why this was accepted.** A certificate is an immutable historical record, so snapshotting
+the names is also the correct semantic. It removes a join and a sort from every export
+batch: with a plain join the 50 batches would each sort 100k rows. Keyset paging also avoids
+holding a cursor/read transaction across thread-pool hops, which SQLite connections and WAL
+checkpointing do not tolerate well.
+
+**Verification.** Generated 100,000 East certificates with
+`scripts/generate_large.py`; export measured **1.0 s** for 7.0 MB (100,013 rows), two
+consecutive exports were byte-identical, and a list request issued while the export stream
+was open returned in **11 ms**. `tests/test_a6_export.py` automates exactly this, including
+the 60 s budget, and passes against a real uvicorn server.
+
+## D3 — Corrected: the first A6 test consumed an async iterator synchronously
+
+**What happened.** The first full run failed with
+
+```
+TypeError: 'async_generator' object is not iterable
+tests/test_a6_export.py:86: TypeError
+```
+
+The test counted the remaining CSV lines with `sum(1 for _ in line_iterator)`, but
+`httpx.Response.aiter_lines()` is asynchronous.
+
+**Correction.** Replaced the call with an `async for` loop that increments a counter, then
+re-ran the suite: `7 passed in 4.17s`. The fix is in commit `6b05ddb`; the failing output
+and the passing re-run are both in the exported session.
+
+This is the only defect the acceptance suite itself surfaced, and it was fixed rather than
+worked around (no assertion was weakened).
+
+## D4 — Corrected: `start.sh` assumed bash 4 empty-array expansion
+
+**What happened.** Running the documented one-command start produced
+
+```
+==> Initialising demo data at /tmp/oceantest/demo.db
+./start.sh: line 45: SEED_ARGS[@]: unbound variable
+```
+
+macOS ships bash 3.2, where expanding an empty array under `set -u` aborts the script. The
+AI-written script had used `"${SEED_ARGS[@]}"` unconditionally.
+
+**Correction.** Guarded the expansion with `[ "${#SEED_ARGS[@]}" -gt 0 ]`
+(`start.sh:45`), which is portable to bash 3.2. Re-ran `./start.sh`: the server came up on
+the requested port, `/` returned `200 text/html` with the built SPA, the JS asset returned
+`200`, and `/api/certificates` returned the 13 seeded East rows.
+
+This is exactly the class of bug that only appears when the documented command is executed
+end-to-end rather than assumed to work.
+
+## D5 — Tradeoff: SQLite + synchronous bulk issue instead of a queue
+
+**Chosen.** A single Python process with SQLite in WAL mode, synchronous bulk issue, and no
+background job infrastructure. The workspace setup must be one command with no external
+service, and the assessment dataset is tens of learners per course.
+
+**Cost.** Writers serialise: a second bulk issue or a revocation waits for the first write
+transaction. With thousands of eligible learners the HTTP request would be long-lived and a
+job queue with polling would be the right design. This is documented in `DESIGN.md` §10 and
+`README.md` §9 rather than hidden.
+
+**Verification.** The concurrent A2 test (six parallel requests) completes quickly and the
+A6 list-during-export check confirms reads are unaffected by the export; the limits are
+stated explicitly in the README's known-defects section.
+
+## D6 — Tradeoff: pinned Vite 7 / TypeScript 5.9 rather than the newest majors
+
+**Context.** The registry currently offers Vite 8.3 and TypeScript 7.0. `@vitejs/plugin-react`
+6.x declares `vite: ^8.0.0` plus new transform peer dependencies, and TypeScript 7 is a new
+major. With a three-hour budget, a broken dev toolchain is an expensive distraction.
+
+**Decision.** Pinned `vite ^7.3.7`, `@vitejs/plugin-react ^5.2.0`, `typescript ~5.9.3`
+(`web/package.json`), and committed the lockfile so `npm ci` is reproducible.
+
+**Verification.** `npm run build` runs `tsc --noEmit && vite build`; it passes both in
+`./verify.sh` and in `./start.sh`. The version investigation is visible in the session's
+`npm view` tool output.

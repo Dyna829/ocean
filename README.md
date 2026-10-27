@@ -1,0 +1,322 @@
+# Certificate Admin Console
+
+Multi-tenant internal admin console for a training platform: review course completions,
+issue certificates in bulk, revoke them with an audit trail, and export certificate data.
+Built for the Ocean AI Labs Beijing technical interview assessment (`docs/briefing.pdf`).
+
+![Certificate list](docs/screenshots/console-list.png)
+
+- Backend: **Python 3.11+ / FastAPI / SQLite (WAL)**
+- Frontend: **React 19 + TypeScript + Vite**, built to `web/dist` and served by FastAPI
+- One process, one origin, one command to start
+- 7 acceptance scenarios covered by `pytest` (`./verify.sh`)
+
+Design rationale, data model, and tradeoffs: [`DESIGN.md`](DESIGN.md).
+
+---
+
+## 1. Quick start (one command)
+
+Requirements: **Python 3.11+** and **Node 20.19+ / npm 10+** (or pnpm, not required).
+
+```bash
+./start.sh
+# → http://127.0.0.1:8000
+```
+
+`start.sh` creates `.venv`, installs `requirements.txt`, installs the web dependencies if
+missing, builds the SPA, seeds the demo database when it is empty, then runs Uvicorn.
+Nothing else needs to be started.
+
+| Variable / flag | Default | Meaning |
+|---|---|---|
+| `PORT` | `8000` | HTTP port |
+| `DB_PATH` | `data/app.db` | SQLite file (created and seeded if empty) |
+| `PYTHON` | `python3` | Interpreter used to create the venv |
+| `./start.sh --reset` | — | wipe and reseed the demo data |
+
+The database is a file, not a service: `data/app.db` is created on first start and is
+git-ignored.
+
+## 2. Verification (second command)
+
+```bash
+./verify.sh
+# => 7 passed  (A1–A7)  + TypeScript type check
+```
+
+`verify.sh` installs `requirements-dev.txt`, runs `pytest tests/`, then runs `tsc --noEmit`
+for the web app. The A6 test generates 100,000 certificates inside the test database and
+asserts the export budget, so the suite takes a few seconds.
+
+## 3. Actors and tenancy
+
+There is no login (by design). The acting admin is identified by a request header:
+
+```
+X-Actor-Email: alice@east.test
+```
+
+| Admin | Email | Tenant | Timezone |
+|---|---|---|---|
+| Alice Chen | `alice@east.test` | East Campus | `Australia/Sydney` |
+| Bob Miller | `bob@west.test` | West Campus | `Australia/Perth` |
+
+The console has an **Acting as** switcher in the header. Changing the actor changes the
+tenant and therefore every list, detail, bulk-issue, revoke, and export response. The
+tenant is always derived server-side from the admin row — no endpoint accepts a tenant id.
+
+## 4. Demo data
+
+Both tenants contain the course **Safety 101** and the learner **Alex Lee** (the A5
+fixtures). Extra courses exist so each scenario can be demonstrated without setup.
+
+| Tenant | Course | Learner | Enrollment | Seeded certificate |
+|---|---|---|---|---|
+| East | Safety 101 | Alex Lee | completed | ACTIVE, `2026-01-10T13:30:00Z` |
+| East | Safety 101 | Maya Chen | completed | — |
+| East | Safety 101 | Priya Nair | completed | — |
+| East | Safety 101 | Tom Baker | incomplete | — |
+| East | Fire Safety | Ava Rodriguez, Ethan Brooks, Liam Wong, Noah Patel | completed | — |
+| East | Data Privacy | Sophia Turner | completed | ACTIVE |
+| East | Data Privacy | Isla Murphy | completed | REVOKED |
+| East | Data Privacy | James Cole | incomplete | — |
+| East | Hazard Reporting | 10 learners | completed | ACTIVE (for pagination) |
+| West | Safety 101 | Alex Lee | completed | ACTIVE, `2026-01-10T13:30:00Z` |
+| West | Safety 101 | Sam Rivera | completed | — |
+| West | Safety 101 | Dana Kim | incomplete | — |
+| West | Fire Safety | Grace Liu, Omar Haddad, Nina Petrova | completed | — |
+
+Totals: East has 13 certificates (page size 10 or 20 shows pagination), West has 1.
+Seed rows are deterministic; `python -m app.seed --reset` rebuilds them.
+
+## 5. Acceptance scenarios A1–A7
+
+Start the app (`./start.sh`) and use `http://127.0.0.1:8000`. Every scenario is also
+automated in `tests/test_a*.py`; the commands below are the manual reproduction.
+
+### A1 — tenant isolation
+
+```bash
+# Bob only ever sees West data
+curl -s -H 'X-Actor-Email: bob@west.test' localhost:8000/api/certificates | jq '.total, .items[].serial'
+# 1, CERT-WEST-2026-000001
+
+# Cross-tenant detail → 404, identical to a missing certificate
+curl -s -o /dev/null -w '%{http_code}\n' -H 'X-Actor-Email: bob@west.test' \
+  localhost:8000/api/certificates/cert_east_alex_safety          # 404
+
+# Cross-tenant bulk issue → 404, no certificates and no audit events written
+curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8000/api/certificates/bulk-issue \
+  -H 'X-Actor-Email: bob@west.test' -H 'Idempotency-Key: cross-1' \
+  -H 'Content-Type: application/json' -d '{"courseId":"course_east_fire"}'   # 404
+
+# Cross-tenant revoke → 404
+curl -s -o /dev/null -w '%{http_code}\n' -X POST -H 'X-Actor-Email: bob@west.test' \
+  localhost:8000/api/certificates/cert_east_alex_safety/revoke                # 404
+```
+
+In the UI: switch to Bob Miller — the list, the export, and the course picker contain only
+West rows; opening an East certificate from a copied URL shows "Certificate not found".
+
+### A2 — retry safety (same Idempotency-Key)
+
+```bash
+for i in 1 2 3; do
+  curl -s -X POST localhost:8000/api/certificates/bulk-issue \
+    -H 'X-Actor-Email: alice@east.test' -H 'Idempotency-Key: demo-a2' \
+    -H 'Content-Type: application/json' -d '{"courseId":"course_east_fire"}' \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["operationId"], d["summary"])'
+done
+```
+
+All three responses have the **same `operationId`** and the same body; the first has
+`Idempotency-Replayed: false`, the retries `true`. Fire Safety has four eligible learners,
+so exactly four certificates and four `ISSUED` audit events exist afterwards — check with
+`curl .../api/certificates?q=Fire` or `sqlite3 data/app.db 'select count(*) from audit_events'`.
+
+Concurrent variant:
+
+```bash
+seq 1 6 | xargs -P6 -I{} curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+  localhost:8000/api/certificates/bulk-issue \
+  -H 'X-Actor-Email: alice@east.test' -H 'Idempotency-Key: demo-a2-parallel' \
+  -H 'Content-Type: application/json' -d '{"courseId":"course_east_safety"}'
+```
+
+Results: six 200s, one operation, two new certificates (Maya Chen, Priya Nair), two audit
+events, and Alex Lee/Tom Baker skipped.
+
+### A3 — key misuse
+
+```bash
+curl -s -X POST localhost:8000/api/certificates/bulk-issue \
+  -H 'X-Actor-Email: alice@east.test' -H 'Idempotency-Key: demo-a2' \
+  -H 'Content-Type: application/json' -d '{"courseId":"course_east_safety"}' \
+  -w '\n%{http_code}\n'          # {"code":"idempotency_key_reuse",...}  409
+```
+
+No second operation runs and the stored result for `demo-a2` is untouched (retry the A2
+command and you still get the Fire Safety outcome).
+
+### A4 — learner outcomes
+
+```bash
+curl -s -X POST localhost:8000/api/certificates/bulk-issue \
+  -H 'X-Actor-Email: alice@east.test' -H 'Idempotency-Key: demo-a4' \
+  -H 'Content-Type: application/json' -d '{"courseId":"course_east_safety"}' | jq '.summary, .outcomes'
+```
+
+`issued` for the two completed, uncertified learners; `skipped` +
+`already_certified` for Alex Lee; `skipped` + `incomplete_enrollment` for Tom Baker.
+The UI shows the same table with per-learner reasons.
+
+### A5 — DST and tenant-local dates
+
+```bash
+curl -s -H 'X-Actor-Email: alice@east.test' 'localhost:8000/api/certificates?q=Alex' \
+  | jq '.items[0] | {issuedAt, issuedAtLocal, issueDateLocal}'
+# 2026-01-10T13:30:00Z | 2026-01-11 00:30 | 2026-01-11     (Sydney, AEDT)
+
+curl -s -H 'X-Actor-Email: bob@west.test' 'localhost:8000/api/certificates?q=Alex' \
+  | jq '.items[0] | {issuedAt, issuedAtLocal, issueDateLocal}'
+# 2026-01-10T13:30:00Z | 2026-01-10 21:30 | 2026-01-10     (Perth, AWST)
+
+curl -s -H 'X-Actor-Email: alice@east.test' \
+  'localhost:8000/api/certificates/export.csv?q=Alex&sort=serial&dir=asc'
+# learner_name,course_title,serial_number,issue_date
+# Alex Lee,Safety 101,CERT-EAST-2026-000001,2026-01-11
+```
+
+List sorting and CSV both use the tenant-local calendar date; `issuedAt` remains UTC.
+
+### A6 — 100,000-row export
+
+```bash
+.venv/bin/python scripts/generate_large.py --tenant east --count 100000
+DB_PATH=data/large.db ./start.sh           # second terminal, default DB untouched
+
+time curl -s -H 'X-Actor-Email: alice@east.test' -o /tmp/large.csv \
+  'http://127.0.0.1:8000/api/certificates/export.csv?sort=learner_name&dir=asc'
+wc -l /tmp/large.csv                       # 100014 (header + 100,013 East rows)
+```
+
+Measured on this machine: **~1.0 s**, 7.0 MB CSV. While the export stream is open, a list
+request still returns in **~11 ms** (see `tests/test_a6_export.py`, which asserts both the
+60 s budget and the concurrent list). Repeated exports are byte-identical, including rows
+with equal learner names / timestamps — the order is `sort key, certificate id`.
+
+### A7 — revocation audit
+
+```bash
+curl -s -X POST localhost:8000/api/certificates/cert_east_sophia_privacy/revoke \
+  -H 'X-Actor-Email: alice@east.test' -H 'Content-Type: application/json' \
+  -d '{"reason":"issued in error"}' | jq '{status: .certificate.status, alreadyRevoked, audit: (.audit|length)}'
+# {"status":"REVOKED","alreadyRevoked":false,"audit":2}
+
+curl -s -X POST localhost:8000/api/certificates/cert_east_sophia_privacy/revoke \
+  -H 'X-Actor-Email: alice@east.test' -H 'Content-Type: application/json' -d '{}' \
+  | jq '{status: .certificate.status, alreadyRevoked, audit: (.audit|length)}'
+# {"status":"REVOKED","alreadyRevoked":true,"audit":2}
+```
+
+Exactly one `REVOKED` audit event, enforced by a unique index on
+`(certificate_id, action)`. In the UI the detail drawer requires an explicit confirmation
+step before revoking, and shows the resulting audit timeline.
+
+## 6. API summary
+
+All endpoints are under `/api` and require `X-Actor-Email`.
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/me` | current actor and tenant |
+| `GET` | `/courses` | tenant courses with eligible / certified / incomplete counts |
+| `GET` | `/certificates` | `q`, `page`, `pageSize` (≤100), `sort` (`issued_date`, `learner_name`, `course_title`, `serial`), `dir` (`asc`/`desc`) |
+| `GET` | `/certificates/{id}` | certificate + audit timeline (404 across tenants) |
+| `POST` | `/certificates/bulk-issue` | `Idempotency-Key` header + `{"courseId": "..."}` |
+| `POST` | `/certificates/{id}/revoke` | idempotent revocation, optional `{"reason": "..."}` |
+| `GET` | `/certificates/export.csv` | same `q`/`sort`/`dir`, streamed CSV |
+| `GET` | `/health` | liveness + database check |
+
+Errors use `{"code", "message", "details"}`; `401` unknown actor, `404` missing or
+cross-tenant resource, `409` idempotency conflict, `422` validation, `400` missing
+idempotency key.
+
+## 7. How the hard parts work
+
+- **Tenant isolation** — the tenant comes from the admin row, every SQL statement carries
+  `tenant_id`, and cross-tenant ids return the same 404 as missing ones. Composite foreign
+  keys prevent a certificate from referencing another tenant's course.
+- **Idempotency** — a `(tenant_id, key)` row stores the request hash and the serialised
+  response inside the same `BEGIN IMMEDIATE` transaction as the issuance. Retries replay
+  the stored bytes; a different payload is a 409. The database also enforces one
+  certificate per `(tenant, course, learner)`, so duplicates are impossible even under a
+  race.
+- **Timezone** — timestamps are UTC; `issue_date_local` is persisted at issuance for
+  sorting and CSV, while display strings are derived from the tenant's IANA zone.
+- **Streaming export** — async generator over 2,000-row keyset pages executed in the
+  worker-thread pool, with a `max(seq)` snapshot horizon; the event loop is never blocked.
+- **Audit integrity** — issuance and revocation events are inserted in the same
+  transaction as the state change, and `unique(certificate_id, action)` makes duplicates
+  physically impossible.
+
+## 8. Repository layout
+
+```
+app/                 FastAPI application
+  schema.sql         DDL and indices
+  db.py              WAL connections + BEGIN IMMEDIATE helper
+  auth.py            X-Actor-Email resolution (server-side tenant)
+  services/          listing, detail, bulk issue, revocation, export queries
+  routers/api.py     HTTP endpoints
+  seed.py            deterministic demo data
+  bulkdata.py        100k-row fixture generator
+web/                 React + TypeScript console (Vite)
+tests/               A1–A7 pytest suites + live-server A6 test
+scripts/generate_large.py
+docs/                briefing, design screenshots
+ai/                  AI interaction evidence (sessions, index, decision log)
+AGENTS.md            AI instructions used for this repository
+DESIGN.md            data model, API contract, tradeoffs
+```
+
+## 9. Known defects and unfinished work
+
+1. **No authentication.** The actor header is a demo affordance; anyone can spoof it.
+   Out of scope per the brief, but it is the first thing to fix for production.
+2. **SQLite single-writer.** Concurrent bulk issues serialise on the write lock. At demo
+   scale this is invisible; at thousands of eligibilities the request should become a
+   queued job.
+3. **Export is not a full MVCC snapshot.** The `max(seq)` horizon hides certificates
+   issued mid-export, but a revocation committed between two batches can still show up in
+   a later batch. Acceptable for an admin download; a materialised snapshot would fix it.
+4. **Search folding is ASCII-only.** SQLite `LIKE` does not case-fold non-ASCII names.
+5. **No automated UI tests.** The backend is covered by pytest; the UI was verified
+   manually (Chrome screenshots in `docs/screenshots/`) and against the same scenarios.
+   Playwright coverage would be the next investment.
+6. **OFFSET pagination.** Deep pages on the 100k dataset measured ~0.10–0.15 s locally
+   (including the `COUNT(*)`), so it is acceptable here, but keyset pagination would be the
+   correct next step for very large offsets.
+7. **Revoked certificates cannot be reissued** — the unique
+   `(tenant, course, learner)` constraint keeps one credential per learner/course. This is
+   a documented product rule, not an oversight; a reissue flow would need a new serial
+   policy.
+8. The 100k database (`data/large.db`, 65 MB) is git-ignored; regenerate it with the
+   command in §5-A6.
+
+## 10. AI assistance and evidence
+
+The build was AI-assisted. All interactive sessions, decisions, and limitations are in
+[`ai/`](ai/):
+
+- `ai/sessions/` — native session exports (JSONL) including prompts, tool calls, commands,
+  errors, and timestamps
+- `ai/session-index.csv` — one row per session with model, window, export file, commits
+- `ai/decision-log.md` — accepted, rejected/corrected, and tradeoff decisions with
+  verification evidence and commit links
+- `ai/completeness-declaration.md` — tools used, export limitations, and the Section 6
+  confirmation
+
+Section 6 (`written-answers.md`) is the only no-AI part of the assessment and was written
+by the candidate alone.
