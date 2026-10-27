@@ -14,8 +14,9 @@ This declaration covers every AI tool used to produce this submission.
 *DeepSeek Harness (3 sessions)* — the main build session (12:24–14:07 +08:00), a short
 follow-up review session (13:30–13:32 +08:00) that examined the idempotency implementation
 and put the audit reason into the request hash, and a final packaging session
-(14:07–14:27 +08:00) that renamed the candidate's written answers to `written-answers.md`,
-refreshed the main export, corrected this evidence, and pushed the submission.
+(14:07–15:05 +08:00) that renamed the candidate's written answers to `written-answers.md`,
+refreshed the main export, expanded `AGENTS.md` with functionality, architecture and boundary
+limits, reconciled this evidence, and pushed the submission.
 
 *MiniMax Code (2 sessions)* — a candidate review session (12:57–13:19 +08:00) that
 re-read `AGENTS.md`, inventoried the A1–A7 suites, built and type-checked the frontend, ran
@@ -94,11 +95,11 @@ result including failures, all timestamps, and the model identifier.
    `tool/result` events rather than as a continuous terminal log. This is the native
    format, not a reduction.
 3. The main session was re-exported after it closed (1808 events, ending at `turn/end`);
-   the follow-up session was already complete. The final packaging session was exported at
-   the packaging step, after the content commit was pushed: its closing summary and the
-   evidence-packaging commit that adds this export are outside that snapshot. Every prompt,
-   tool call, and tool result up to that point is present. `ai/session-index.csv` records all
-   three windows.
+   the follow-up session was already complete. The final packaging session was re-exported at
+   the final packaging step (15:05), after the content commits were pushed: its closing
+   summary and the evidence-packaging commit that adds this export are outside that snapshot.
+   Every prompt, tool call, and tool result up to that point is present.
+   `ai/session-index.csv` records all three windows.
 4. MiniMax Code has the same two limitations, with one difference: it does not compress the
    session log, so `mavis-session-*.native.jsonl` is already the untouched record and no
    "decompressed for review" twin exists. The evidence-refresh session
@@ -128,9 +129,10 @@ result including failures, all timestamps, and the model identifier.
 
 Section 6 (`written-answers.md`) is the only part of the assessment that must be produced
 without AI. The candidate wrote it independently and confirmed completion on 2026-10-27; no
-AI tool produced or edited its content. The final packaging session only renamed the file to
-the required path. The boundary comes from `docs/briefing.pdf` §6, and the assistant did not
-read, draft, outline, summarise, translate, rephrase, proofread, or improve the answers.
+AI tool produced or edited its content. The final packaging session moved the file to the
+required path without reading or editing its content. The boundary comes from
+`docs/briefing.pdf` §6, and the assistant did not read, draft, outline, summarise, translate,
+rephrase, proofread, or improve the answers.
 
 This holds for both tools. The DeepSeek Harness packaging session renamed the file and did
 not touch its content. Neither MiniMax Code session could have read it either: the review
