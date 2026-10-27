@@ -235,6 +235,8 @@ The first version of this export was 61.7 s at 1M rows (super-linear); the two-s
 and index hint in `export_batch` fixed it. `tests/test_a6_export.py` caught the intermediate
 bug where rows were silently skipped, because it asserts the exact row count.
 
+![Console against the 100,000-row database](docs/screenshots/console-100k.png)
+
 ### A7 — revocation audit
 
 ```bash
