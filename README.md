@@ -316,8 +316,8 @@ emitted next to the code that owns them:
 
 | Event | Level | Fields |
 |---|---|---|
-| `bulk_issue.start` / `.done` | INFO | operationId, courseId, issued/skipped/failed, durationMs |
-| `bulk_issue.replay` | INFO | operationId (idempotent retry) |
+| `bulk_issue.start` / `.done` | INFO | operationId, courseId, issued/skipped/failed, durationMs (start is emitted only when the request actually executes) |
+| `bulk_issue.replay` | INFO | operationId of the stored operation (no new attempt is logged) |
 | `bulk_issue.conflict` | WARNING | keyHash, courseId |
 | `bulk_issue.course_not_found` | WARNING | courseId (cross-tenant or missing) |
 | `certificate.revoked` / `.revoke_replay` | INFO | certificateId, serial |

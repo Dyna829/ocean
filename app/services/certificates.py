@@ -384,19 +384,6 @@ def bulk_issue(
     now_dt = utc_now()
     now = iso_utc(now_dt)
 
-    log.info(
-        "bulk_issue.start",
-        extra={
-            "fields": {
-                "operationId": operation_id,
-                "courseId": course_id,
-                "actor": actor.email,
-                "tenant": actor.tenant_slug,
-                "keyHash": key_hash,
-            }
-        },
-    )
-
     with db.write() as conn:
         existing = conn.execute(
             "SELECT request_hash, status, response_json, operation_id FROM idempotency_keys "
@@ -410,7 +397,6 @@ def bulk_issue(
                     "bulk_issue.conflict",
                     extra={
                         "fields": {
-                            "operationId": operation_id,
                             "courseId": course_id,
                             "actor": actor.email,
                             "tenant": actor.tenant_slug,
@@ -446,6 +432,21 @@ def bulk_issue(
                 "idempotency_key_in_progress",
                 "An operation with this Idempotency-Key is still in progress",
             )
+
+        # Logged only when this request will actually execute: a replay reports the
+        # stored operation id instead of a fresh id that never existed.
+        log.info(
+            "bulk_issue.start",
+            extra={
+                "fields": {
+                    "operationId": operation_id,
+                    "courseId": course_id,
+                    "actor": actor.email,
+                    "tenant": actor.tenant_slug,
+                    "keyHash": key_hash,
+                }
+            },
+        )
 
         course = conn.execute(
             "SELECT id, title FROM courses WHERE id = ? AND tenant_id = ?",

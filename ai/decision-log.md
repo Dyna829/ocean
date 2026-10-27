@@ -168,10 +168,13 @@ happened (INFO), why it was slow (WARNING), and what broke (ERROR + traceback).
 
 **Verification.**
 
-- `./verify.sh` → **15 passed**: 7 acceptance scenarios plus 8 logging tests covering the
+- `./verify.sh` passes: 7 acceptance scenarios plus the logging tests covering the
   request line fields, `bulk_issue` summary, 409 as `WARNING`, DEBUG suppression at INFO,
   unhandled 500 with `X-Request-Id`, slow-request warning, client id echo/rejection, and the
   text/JSON formatters.
+- A replay logs only `bulk_issue.replay` with the stored operation id; `start` is emitted
+  only when the request executes, so grepping an operation id never lands on an attempt that
+  never ran.
 - Manual: text output shows `request_id`, `operationId`, `issued=4`, `durationMs`;
   `LOG_FORMAT=json` emits one JSON object per line; a browser-generated
   `request_id=web-ef5464810e9a` appears on both the console `api.response` entry and the
