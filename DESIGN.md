@@ -209,6 +209,17 @@ Inside one transaction: if `rowcount == 1`, insert exactly one `REVOKED` audit e
 and the response is `200` with `alreadyRevoked: true`. The audit unique index makes a
 duplicate physically impossible.
 
+### 5.6 Observability
+
+One structured line per HTTP request from a raw ASGI middleware (not `BaseHTTPMiddleware`,
+which buffers streaming responses and would distort the export); the line carries method,
+path, status, duration, actor, tenant, and the request id that is also returned as
+`X-Request-Id`. Business events (`bulk_issue.*`, `certificate.revoked`, `export.*`,
+`auth.rejected`) are logged by the services that own them. Levels are standard
+(`DEBUG`/`INFO`/`WARNING`/`ERROR`), selectable with `LOG_LEVEL`, with `LOG_FORMAT=json` for
+collectors. The SPA logs the same four levels to the console and sends its own
+`X-Request-Id`, so one browser action and its server request share an identifier.
+
 ## 6. Acceptance matrix
 
 | ID | Behaviour | How it is verified |

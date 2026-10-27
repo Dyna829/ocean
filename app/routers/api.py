@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import time
 from typing import Any
 
 from anyio import to_thread
@@ -9,10 +10,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..auth import Actor, get_actor
+from ..logging import get_logger
 from ..timeutil import iso_utc, utc_now
 from ..services import certificates as service
 
 router = APIRouter()
+log = get_logger("app.export")
 
 CSV_HEADER = "learner_name,course_title,serial_number,issue_date\r\n"
 
@@ -70,35 +73,64 @@ async def _csv_stream(
     db: Any, actor: Actor, q: str, sort: str, direction: str
 ) -> Any:
     horizon = await to_thread.run_sync(functools.partial(service.export_horizon, db, actor))
-    yield CSV_HEADER
+    started = time.perf_counter()
+    rows_sent = 0
+    log.info(
+        "export.start",
+        extra={
+            "fields": {
+                "actor": actor.email,
+                "tenant": actor.tenant_slug,
+                "sort": sort,
+                "dir": direction,
+                "qLen": len(q),
+            }
+        },
+    )
 
-    last: tuple[str, str] | None = None
-    while True:
-        rows = await to_thread.run_sync(
-            functools.partial(
-                service.export_batch,
-                db,
-                actor,
-                q=q,
-                sort=sort,
-                direction=direction,
-                horizon=horizon,
-                last=last,
+    try:
+        yield CSV_HEADER
+
+        last: tuple[str, str] | None = None
+        while True:
+            rows = await to_thread.run_sync(
+                functools.partial(
+                    service.export_batch,
+                    db,
+                    actor,
+                    q=q,
+                    sort=sort,
+                    direction=direction,
+                    horizon=horizon,
+                    last=last,
+                )
             )
+            if not rows:
+                return
+
+            buffer: list[str] = []
+            for row in rows:
+                buffer.append(
+                    f"{service.csv_cell(row['learner_name'])},"
+                    f"{service.csv_cell(row['course_title'])},"
+                    f"{service.csv_cell(row['serial'])},"
+                    f"{service.csv_cell(row['issue_date_local'])}\r\n"
+                )
+                last = (row["sort_value"], row["id"])
+            rows_sent += len(rows)
+            yield "".join(buffer)
+    finally:
+        log.info(
+            "export.done",
+            extra={
+                "fields": {
+                    "actor": actor.email,
+                    "tenant": actor.tenant_slug,
+                    "rows": rows_sent,
+                    "durationMs": round((time.perf_counter() - started) * 1000, 1),
+                }
+            },
         )
-        if not rows:
-            return
-
-        buffer: list[str] = []
-        for row in rows:
-            buffer.append(
-                f"{service.csv_cell(row['learner_name'])},"
-                f"{service.csv_cell(row['course_title'])},"
-                f"{service.csv_cell(row['serial'])},"
-                f"{service.csv_cell(row['issue_date_local'])}\r\n"
-            )
-            last = (row["sort_value"], row["id"])
-        yield "".join(buffer)
 
 
 @router.get("/certificates/export.csv")

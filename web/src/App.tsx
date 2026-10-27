@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { downloadCertificateExport, fetchCertificates, fetchMe, messageOf } from "./api";
 import { useDebouncedValue } from "./hooks";
+import { log } from "./log";
 import type { ListState, Me, SortDir, SortField } from "./types";
 import { Banner } from "./components/Banner";
 import { BulkIssueDialog } from "./components/BulkIssueDialog";
@@ -139,7 +140,13 @@ export default function App() {
           ) : null}
           <label className="actor-picker">
             <span>Acting as</span>
-            <select value={actorEmail} onChange={(event) => setActorEmail(event.target.value)}>
+            <select
+              value={actorEmail}
+              onChange={(event) => {
+                log.info("actor.switch", { actor: event.target.value });
+                setActorEmail(event.target.value);
+              }}
+            >
               {ACTORS.map((actor) => (
                 <option key={actor.email} value={actor.email}>
                   {actor.label}

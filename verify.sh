@@ -13,7 +13,7 @@ fi
 echo "==> Installing verification dependencies"
 .venv/bin/python -m pip install --quiet --disable-pip-version-check -r requirements-dev.txt
 
-echo "==> Running acceptance scenarios A1-A7"
+echo "==> Running the test suite (acceptance A1-A7 + logging)"
 .venv/bin/python -m pytest tests -q
 
 if [ ! -d web/node_modules ]; then

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, fetchCertificate, messageOf, revokeCertificate } from "../api";
+import { log } from "../log";
 import type { CertificateDetail } from "../types";
 import { Banner } from "./Banner";
 import { StatusBadge } from "./StatusBadge";
@@ -52,6 +53,10 @@ export function DetailDrawer({ actor, certificateId, timezone, onClose, onChange
   }, [onClose]);
 
   async function submitRevoke() {
+    log.info("certificate.revoke.submit", {
+      certificateId,
+      hasReason: reason.trim().length > 0,
+    });
     setRevoking(true);
     setRevokeError(null);
     try {

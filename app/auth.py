@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from fastapi import Request
 
 from .errors import ApiError
+from .logging import get_logger
+
+log = get_logger("app.auth")
 
 
 @dataclass(frozen=True)
@@ -35,6 +38,10 @@ def get_actor(request: Request) -> Actor:
     """
     raw = (request.headers.get("x-actor-email") or "").strip().lower()
     if not raw:
+        log.warning(
+            "auth.rejected",
+            extra={"fields": {"reason": "missing_header", "path": request.url.path}},
+        )
         raise ApiError(401, "unauthenticated", "X-Actor-Email header is required")
 
     row = request.app.state.db.conn.execute(
@@ -50,7 +57,21 @@ def get_actor(request: Request) -> Actor:
     ).fetchone()
 
     if row is None:
+        log.warning(
+            "auth.rejected",
+            extra={
+                "fields": {
+                    "reason": "unknown_actor",
+                    "email": raw,
+                    "path": request.url.path,
+                }
+            },
+        )
         raise ApiError(401, "unauthenticated", "Unknown actor")
+
+    # Visible to the request-log middleware after the response is produced.
+    request.state.actor_email = row["email"]
+    request.state.tenant_slug = row["tenant_slug"]
 
     return Actor(
         admin_id=row["admin_id"],

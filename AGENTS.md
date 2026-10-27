@@ -54,7 +54,7 @@ Source requirements: `docs/briefing.pdf`.
 | Frontend / 前端 | React 19 · TypeScript · Vite; built to `web/dist` and served by FastAPI / 构建到 `web/dist`，由 FastAPI 托管 |
 | Origin / 同源 | Single process, single origin, no CORS / 单进程单源，不引入 CORS |
 | Start / 启动 | `./start.sh` installs deps, builds the SPA, seeds demo data, serves `:8000` / 安装依赖、构建前端、写入演示数据并启动 |
-| Verify / 验证 | `./verify.sh` runs the A1–A7 pytest suites plus `tsc --noEmit` / 运行 A1–A7 测试与前端类型检查 |
+| Verify / 验证 | `./verify.sh` runs the pytest suite (A1–A7 + logging) plus `tsc --noEmit` / 运行 pytest（A1–A7 与日志测试）及前端类型检查 |
 | Data / 数据 | SQLite at `DB_PATH` (default `data/app.db`); `app/seed.py` seeds demo data / 默认 `data/app.db`，由 `app/seed.py` 写入演示数据 |
 | Large data / 大数据 | `scripts/generate_large.py` writes a separate 100k-row database / 生成独立的 10 万行数据库 |
 
@@ -113,7 +113,30 @@ Source requirements: `docs/briefing.pdf`.
   错误体统一为 `{ "code", "message", "details" }`：401 未知操作者，404 不存在或跨租户，
   409 幂等冲突，422 校验失败，400 缺少幂等 key。
 
-## 5. Verification / 验证
+## 5. Logging / 日志
+
+**EN**
+
+- Backend: `app/logging.py` (formatters, level from `LOG_LEVEL`), one structured line per
+  request from `app/middleware.py`. Log levels: `DEBUG` for diagnostics, `INFO` for requests
+  and business events, `WARNING` for conflicts / rejected auth / slow requests, `ERROR` for
+  failed work and unhandled exceptions.
+- Frontend: `web/src/log.ts` with the same four levels; default `debug` in dev and `info`
+  in production. API calls send `X-Request-Id` so browser and server logs correlate.
+- Use `extra={"fields": {...}}` for structured data. Never log request bodies, headers,
+  credentials, or learner personal data (ids are fine); keep learner names out of logs.
+
+**中文**
+
+- 后端：`app/logging.py`（格式化与 `LOG_LEVEL`），每个请求由 `app/middleware.py` 输出一条
+  结构化日志。级别约定：`DEBUG` 诊断信息，`INFO` 请求与业务事件，`WARNING` 冲突 / 鉴权失败 /
+  慢请求，`ERROR` 失败操作与未捕获异常。
+- 前端：`web/src/log.ts`，同样四级；开发默认 `debug`，生产默认 `info`。API 调用携带
+  `X-Request-Id`，使浏览器日志与服务端日志可关联。
+- 结构化字段用 `extra={"fields": {...}}`。禁止记录请求体、请求头、凭据或学员个人信息
+  （记录 ID 可以），日志中不要出现学员姓名。
+
+## 6. Verification / 验证
 
 **EN**
 
@@ -131,13 +154,15 @@ Source requirements: `docs/briefing.pdf`.
 - 不得削弱或删除失败用例；要么修好行为，要么在 `README.md` 的「已知缺陷」中如实记录。
 - 列表界面必须真实覆盖加载中、空列表、错误三种状态。
 
-## 6. Engineering practice / 工程约定
+## 7. Engineering practice / 工程约定
 
 - Small commits with one concern each; prefixes `feat:`, `fix:`, `test:`, `docs:`,
   `chore:`, `refactor:`.
   提交要小、单一职责；前缀使用 `feat:`、`fix:`、`test:`、`docs:`、`chore:`、`refactor:`。
 - Keep `README.md` and `DESIGN.md` in sync when behaviour changes.
   行为变化时同步更新 `README.md` 与 `DESIGN.md`。
+- Add or update tests when logging behaviour changes (levels, fields, correlation).
+  日志行为（级别、字段、关联 ID）变化时，补测试或更新测试。
 - Never commit credentials, tokens, or private third-party data.
   禁止提交凭据、令牌或第三方隐私数据。
 - Do not commit `.venv/`, `web/node_modules/`, `web/dist/`, `data/`, or caches.

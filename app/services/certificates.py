@@ -1,18 +1,20 @@
 from __future__ import annotations
 
+import hashlib
 import json
-import logging
 import math
 import secrets
 import sqlite3
+import time
 from typing import Any, Literal
 
 from ..auth import Actor
 from ..db import Database
 from ..errors import ApiError
+from ..logging import get_logger
 from ..timeutil import iso_utc, local_date, local_display, utc_now
 
-log = logging.getLogger("app.certificates")
+log = get_logger("app.certificates")
 
 SortField = Literal["issued_date", "learner_name", "course_title", "serial"]
 Direction = Literal["asc", "desc"]
@@ -118,6 +120,7 @@ def list_certificates(
     clauses, params = _filters(actor.tenant_id, q)
     where = " AND ".join(clauses)
     conn = db.conn
+    started = time.perf_counter()
 
     total = conn.execute(
         f"SELECT COUNT(*) AS n FROM certificates c WHERE {where}", params
@@ -135,6 +138,22 @@ def list_certificates(
         [*params, page_size, offset],
     ).fetchall()
 
+    log.debug(
+        "certificates.list",
+        extra={
+            "fields": {
+                "actor": actor.email,
+                "tenant": actor.tenant_slug,
+                "qLen": len(q),
+                "page": page,
+                "pageSize": page_size,
+                "sort": sort,
+                "dir": direction,
+                "total": total,
+                "durationMs": round((time.perf_counter() - started) * 1000, 1),
+            }
+        },
+    )
     return {
         "items": [_item(row, actor.timezone) for row in rows],
         "page": page,
@@ -155,6 +174,16 @@ def _detail(conn: sqlite3.Connection, actor: Actor, certificate_id: str) -> dict
     ).fetchone()
     if row is None:
         # Same response for "does not exist" and "belongs to another tenant" (A1).
+        log.info(
+            "certificate.not_found",
+            extra={
+                "fields": {
+                    "actor": actor.email,
+                    "tenant": actor.tenant_slug,
+                    "certificateId": certificate_id,
+                }
+            },
+        )
         raise ApiError(404, "certificate_not_found", "Certificate not found")
 
     audits = conn.execute(
@@ -223,13 +252,34 @@ def revoke_certificate(
 ) -> dict[str, Any]:
     with db.write() as conn:
         row = conn.execute(
-            "SELECT status FROM certificates WHERE id = ? AND tenant_id = ?",
+            "SELECT status, serial FROM certificates WHERE id = ? AND tenant_id = ?",
             (certificate_id, actor.tenant_id),
         ).fetchone()
         if row is None:
+            log.warning(
+                "certificate.revoke_not_found",
+                extra={
+                    "fields": {
+                        "actor": actor.email,
+                        "tenant": actor.tenant_slug,
+                        "certificateId": certificate_id,
+                    }
+                },
+            )
             raise ApiError(404, "certificate_not_found", "Certificate not found")
 
         if row["status"] == "REVOKED":
+            log.info(
+                "certificate.revoke_replay",
+                extra={
+                    "fields": {
+                        "actor": actor.email,
+                        "tenant": actor.tenant_slug,
+                        "certificateId": certificate_id,
+                        "serial": row["serial"],
+                    }
+                },
+            )
             detail = _detail(conn, actor, certificate_id)
             return {**detail, "alreadyRevoked": True}
 
@@ -264,12 +314,22 @@ def revoke_certificate(
 
         detail = _detail(conn, actor, certificate_id)
 
+    log.info(
+        "certificate.revoked",
+        extra={
+            "fields": {
+                "actor": actor.email,
+                "tenant": actor.tenant_slug,
+                "certificateId": certificate_id,
+                "serial": detail["certificate"]["serial"],
+                "reasonProvided": bool(reason),
+            }
+        },
+    )
     return {**detail, "alreadyRevoked": False, "revokedAt": now}
 
 
 def _request_hash(course_id: str) -> str:
-    import hashlib
-
     payload = json.dumps({"endpoint": "bulk-issue", "courseId": course_id}, sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -296,30 +356,72 @@ def bulk_issue(
 ) -> tuple[int, dict[str, Any], bool]:
     key = (idempotency_key or "").strip()
     if not key:
+        log.warning(
+            "bulk_issue.missing_key",
+            extra={"fields": {"actor": actor.email, "tenant": actor.tenant_slug, "courseId": course_id}},
+        )
         raise ApiError(400, "idempotency_key_required", "Idempotency-Key header is required")
     if len(key) > 200:
         raise ApiError(400, "idempotency_key_invalid", "Idempotency-Key is too long")
 
     request_hash = _request_hash(course_id)
     operation_id = f"op_{secrets.token_hex(8)}"
+    key_hash = hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
+    started = time.perf_counter()
     now_dt = utc_now()
     now = iso_utc(now_dt)
 
+    log.info(
+        "bulk_issue.start",
+        extra={
+            "fields": {
+                "operationId": operation_id,
+                "courseId": course_id,
+                "actor": actor.email,
+                "tenant": actor.tenant_slug,
+                "keyHash": key_hash,
+            }
+        },
+    )
+
     with db.write() as conn:
         existing = conn.execute(
-            "SELECT request_hash, status, response_json FROM idempotency_keys "
+            "SELECT request_hash, status, response_json, operation_id FROM idempotency_keys "
             "WHERE tenant_id = ? AND key = ?",
             (actor.tenant_id, key),
         ).fetchone()
 
         if existing is not None:
             if existing["request_hash"] != request_hash:
+                log.warning(
+                    "bulk_issue.conflict",
+                    extra={
+                        "fields": {
+                            "operationId": operation_id,
+                            "courseId": course_id,
+                            "actor": actor.email,
+                            "tenant": actor.tenant_slug,
+                            "keyHash": key_hash,
+                        }
+                    },
+                )
                 raise ApiError(
                     409,
                     "idempotency_key_reuse",
                     "Idempotency-Key was already used with a different request payload",
                 )
             if existing["status"] == "SUCCEEDED":
+                log.info(
+                    "bulk_issue.replay",
+                    extra={
+                        "fields": {
+                            "operationId": existing["operation_id"],
+                            "actor": actor.email,
+                            "tenant": actor.tenant_slug,
+                            "keyHash": key_hash,
+                        }
+                    },
+                )
                 return 200, json.loads(existing["response_json"]), True
             raise ApiError(
                 409,
@@ -333,6 +435,17 @@ def bulk_issue(
         ).fetchone()
         if course is None:
             # Cross-tenant course ids are indistinguishable from missing ones (A1).
+            log.warning(
+                "bulk_issue.course_not_found",
+                extra={
+                    "fields": {
+                        "operationId": operation_id,
+                        "courseId": course_id,
+                        "actor": actor.email,
+                        "tenant": actor.tenant_slug,
+                    }
+                },
+            )
             raise ApiError(404, "course_not_found", "Course not found")
 
         enrollments = conn.execute(
@@ -442,11 +555,16 @@ def bulk_issue(
             except (sqlite3.IntegrityError, sqlite3.OperationalError) as exc:
                 conn.execute("ROLLBACK TO issue_learner")
                 conn.execute("RELEASE issue_learner")
-                log.warning(
-                    "bulk_issue learner failure operation=%s learner=%s error=%s",
-                    operation_id,
-                    row["learner_id"],
-                    exc,
+                log.error(
+                    "bulk_issue.learner_failed",
+                    extra={
+                        "fields": {
+                            "operationId": operation_id,
+                            "learnerId": row["learner_id"],
+                            "error": type(exc).__name__,
+                            "detail": str(exc)[:200],
+                        }
+                    },
                 )
                 outcomes.append(
                     {
@@ -487,6 +605,21 @@ def bulk_issue(
             (actor.tenant_id, key, request_hash, response_json, operation_id, now, now),
         )
 
+    log.info(
+        "bulk_issue.done",
+        extra={
+            "fields": {
+                "operationId": operation_id,
+                "courseId": course_id,
+                "issued": issued,
+                "skipped": skipped,
+                "failed": failed,
+                "durationMs": round((time.perf_counter() - started) * 1000, 1),
+                "actor": actor.email,
+                "tenant": actor.tenant_slug,
+            }
+        },
+    )
     return 200, response, False
 
 

@@ -42,7 +42,7 @@ git-ignored.
 
 ```bash
 ./verify.sh
-# => 7 passed  (A1–A7)  + TypeScript type check
+# => 15 passed  (A1–A7 + 8 logging tests)  + TypeScript type check
 ```
 
 `verify.sh` installs `requirements-dev.txt`, runs `pytest tests/`, then runs `tsc --noEmit`
@@ -261,7 +261,76 @@ idempotency key.
   transaction as the state change, and `unique(certificate_id, action)` makes duplicates
   physically impossible.
 
-## 8. Repository layout
+## 8. Logging
+
+Both tiers log with four levels — `debug`, `info`, `warn`, `error` — and share a request id
+so a browser action can be followed into the server log.
+
+### 8.1 Backend
+
+Configured in [`app/logging.py`](app/logging.py); one line per event.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
+| `LOG_FORMAT` | `text` | `text` (human) or `json` (one object per line) |
+| `LOG_SLOW_REQUEST_MS` | `2000` | requests slower than this log at `WARNING` as `request.slow` |
+
+Every request produces one line from the ASGI middleware in
+[`app/middleware.py`](app/middleware.py) with `method`, `path`, `status`, `durationMs`,
+`actor`, `tenant`, and `request_id`; the response carries `X-Request-Id`. Business events are
+emitted next to the code that owns them:
+
+| Event | Level | Fields |
+|---|---|---|
+| `bulk_issue.start` / `.done` | INFO | operationId, courseId, issued/skipped/failed, durationMs |
+| `bulk_issue.replay` | INFO | operationId (idempotent retry) |
+| `bulk_issue.conflict` | WARNING | keyHash, courseId |
+| `bulk_issue.course_not_found` | WARNING | courseId (cross-tenant or missing) |
+| `certificate.revoked` / `.revoke_replay` | INFO | certificateId, serial |
+| `certificate.revoke_not_found` | WARNING | certificateId |
+| `export.start` / `.done` | INFO | sort, dir, rows, durationMs |
+| `auth.rejected` | WARNING | reason, attempted email |
+| `request.failed` | ERROR | status 500 + traceback |
+
+```text
+2026-10-27T05:19:10.207Z INFO    app.certificates     bulk_issue.done request_id=b5e7337033cf operationId=op_e99c78eb5ab545a0 courseId=course_east_fire issued=4 skipped=0 failed=0 durationMs=1.1 actor=alice@east.test tenant=east
+```
+
+```bash
+LOG_FORMAT=json ./start.sh    # {"ts":"...","level":"INFO","logger":"app.request","event":"request","request_id":"...","method":"GET","path":"/api/certificates","status":200,"durationMs":19.9,"actor":"alice@east.test","tenant":"east"}
+```
+
+`DEBUG` adds list/export internals (`certificates.list` with page/sort/total). `WARNING`
+covers idempotency conflicts, cross-tenant write attempts, rejected actors, and slow
+requests. Request bodies, headers, learner names, and learner emails are never logged.
+
+`start.sh` runs Uvicorn with `--no-access-log`: the middleware replaces the default access
+log and adds the fields above.
+
+### 8.2 Frontend
+
+[`web/src/log.ts`](web/src/log.ts) mirrors the same levels.
+
+- Default level: `debug` in the Vite dev server, `info` in the production build; override
+  with `VITE_LOG_LEVEL` at build time.
+- At runtime: `setLogLevel("debug")` in the browser console (persisted in
+  `localStorage["cca.logLevel"]`), `getLogLevel()` to read it.
+- Logged: `app.boot`, `actor.switch`, `api.request` / `api.response` / `api.error` /
+  `api.network_error`, `bulk_issue.submit` / `.result` / `.failed`, `export.start` / `.done`,
+  `certificate.revoke.submit`, plus `window.error` and `unhandledrejection`.
+- Each API call sends a generated `X-Request-Id` (`web-…`) and logs it, so the browser line
+  and the server line share one id:
+
+```text
+[debug] api.response {requestId: "web-ef5464810e9a", status: 200, durationMs: 2}
+→ 2026-10-27T05:20:38.328Z INFO app.request request request_id=web-ef5464810e9a method=GET path=/api/certificates/cert_east_isla_privacy status=200 durationMs=2.5 actor=alice@east.test tenant=east
+```
+
+Client logs stay in the browser console — there is no log-shipping endpoint (see known
+defects).
+
+## 9. Repository layout
 
 ```
 app/                 FastAPI application
@@ -281,7 +350,7 @@ AGENTS.md            AI instructions used for this repository
 DESIGN.md            data model, API contract, tradeoffs
 ```
 
-## 9. Known defects and unfinished work
+## 10. Known defects and unfinished work
 
 1. **No authentication.** The actor header is a demo affordance; anyone can spoof it.
    Out of scope per the brief, but it is the first thing to fix for production.
@@ -302,10 +371,14 @@ DESIGN.md            data model, API contract, tradeoffs
    `(tenant, course, learner)` constraint keeps one credential per learner/course. This is
    a documented product rule, not an oversight; a reissue flow would need a new serial
    policy.
-8. The 100k database (`data/large.db`, 65 MB) is git-ignored; regenerate it with the
-   command in §5-A6.
+8. **Client logs are console-only.** There is no `/api/client-logs` sink, no sampling, and
+   no retention; a browser tab closing loses its logs.
+9. **Logs go to stdout only.** No file sink, rotation, or retention policy; a collector is
+   expected to own that in any real deployment.
+10. The 100k database (`data/large.db`, 65 MB) is git-ignored; regenerate it with the
+    command in §5-A6.
 
-## 10. AI assistance and evidence
+## 11. AI assistance and evidence
 
 The build was AI-assisted. All interactive sessions, decisions, and limitations are in
 [`ai/`](ai/):

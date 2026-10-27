@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import logging
+import os
 
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
@@ -11,12 +11,16 @@ from fastapi.staticfiles import StaticFiles
 from .config import WEB_DIST, resolve_db_path
 from .db import Database
 from .errors import ApiError
+from .logging import configure_logging, get_logger
+from .middleware import RequestLogMiddleware
 from .routers import api
 
-log = logging.getLogger("app")
+log = get_logger("app")
 
 
 def create_app(database: Database | None = None, *, serve_static: bool = True) -> FastAPI:
+    configure_logging()
+
     db = database or Database(resolve_db_path())
     db.init_schema()
 
@@ -29,6 +33,10 @@ def create_app(database: Database | None = None, *, serve_static: bool = True) -
     )
     application.state.db = db
     application.include_router(api.router, prefix="/api")
+    application.add_middleware(
+        RequestLogMiddleware,
+        slow_request_ms=int(os.environ.get("LOG_SLOW_REQUEST_MS", "2000")),
+    )
 
     @application.exception_handler(ApiError)
     async def handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
@@ -60,4 +68,14 @@ def create_app(database: Database | None = None, *, serve_static: bool = True) -
                 }
             )
 
+    log.info(
+        "app.start",
+        extra={
+            "fields": {
+                "db": str(db.path),
+                "static": bool(serve_static and (WEB_DIST / "index.html").is_file()),
+                "logLevel": os.environ.get("LOG_LEVEL", "INFO"),
+            }
+        },
+    )
     return application

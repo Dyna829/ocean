@@ -49,4 +49,4 @@ else
 fi
 
 echo "==> Certificate Admin Console: http://127.0.0.1:${PORT}"
-exec .venv/bin/python -m uvicorn app.asgi:app --host 127.0.0.1 --port "$PORT"
+exec .venv/bin/python -m uvicorn app.asgi:app --host 127.0.0.1 --port "$PORT" --no-access-log
