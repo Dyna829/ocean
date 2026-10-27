@@ -15,6 +15,7 @@ Time zone for every timestamp below: Asia/Singapore (+08:00), 2026-10-27.
 | D4 | corrected | `start.sh` assumed bash 4 empty-array semantics | `ebb8485` |
 | D5 | tradeoff | SQLite single-writer + synchronous bulk issue, no queue | `b94ac80`, `0f6674e` |
 | D6 | tradeoff | Pinned Vite 7 / TypeScript 5.9 instead of the newest majors | `48c2938` |
+| D7 | accepted | Leveled structured logging with a shared request id | `dfbeee4` |
 
 ---
 
@@ -134,3 +135,46 @@ major. With a three-hour budget, a broken dev toolchain is an expensive distract
 **Verification.** `npm run build` runs `tsc --noEmit && vite build`; it passes both in
 `./verify.sh` and in `./start.sh`. The version investigation is visible in the session's
 `npm view` tool output.
+
+---
+
+## D7 — Accepted: leveled structured logging with a shared request id
+
+**Context.** Up to this point the API had one `log.warning` call and Uvicorn's default access
+log. There was no logging configuration at all, so `app.*` warnings fell through to
+`logging.lastResort` and printed without timestamp, level, or logger name; nothing tied a
+request to the business events it produced, and the browser had no structured logging.
+
+**Proposal accepted.** Four levels (`DEBUG`/`INFO`/`WARNING`/`ERROR`) on both tiers:
+
+- `app/logging.py` configures one stdout handler with a text or JSON formatter, level from
+  `LOG_LEVEL`, and a `request_id` context variable.
+- `app/middleware.py` logs exactly one line per request (method, path, status, duration,
+  actor, tenant, request_id) and returns `X-Request-Id`; it is raw ASGI rather than
+  `BaseHTTPMiddleware` so the streaming CSV export is not buffered.
+- Services log their own events: `bulk_issue.start/done/replay/conflict`,
+  `certificate.revoked/revoke_replay`, `export.start/done`, `auth.rejected`, plus
+  `request.failed` with the traceback.
+- `web/src/log.ts` mirrors the levels, logs API calls and UI actions, and sends a generated
+  `X-Request-Id` so a console line and the server line share one identifier.
+
+**Why this shape.** The requests that matter for this product are already small and explicit;
+a middleware plus a handful of business events gives correlation without a logging framework,
+and the level switch maps directly onto what an interviewer or operator would ask for: what
+happened (INFO), why it was slow (WARNING), and what broke (ERROR + traceback).
+
+**Verification.**
+
+- `./verify.sh` → **15 passed**: 7 acceptance scenarios plus 8 logging tests covering the
+  request line fields, `bulk_issue` summary, 409 as `WARNING`, DEBUG suppression at INFO,
+  unhandled 500 with `X-Request-Id`, slow-request warning, client id echo/rejection, and the
+  text/JSON formatters.
+- Manual: text output shows `request_id`, `operationId`, `issued=4`, `durationMs`;
+  `LOG_FORMAT=json` emits one JSON object per line; a browser-generated
+  `request_id=web-ef5464810e9a` appears on both the console `api.response` entry and the
+  server `app.request` line; `setLogLevel("debug")` reveals `api.request`/`api.response`
+  while the production default (`info`) hides them.
+
+**Cost.** One INFO line per request (accepted: it replaces Uvicorn's access log, which
+`start.sh` now disables). Client logs stay in the browser console — no shipping endpoint —
+which is recorded under known defects in `README.md` §10.
