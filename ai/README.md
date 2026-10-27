@@ -1,12 +1,15 @@
 # AI session evidence
 
-One AI session produced this submission: a DeepSeek Harness (DSH) session using the
-`deepseek-flash` model on 2026-10-27, 12:24–13:00 (Asia/Singapore).
+Two AI sessions produced this submission, both DeepSeek Harness (DSH) with the
+`deepseek-flash` model on 2026-10-27 (Asia/Singapore): the main build session
+(12:24–13:42) and a short follow-up review of idempotency edge cases (13:30–13:32).
 
 | File | What it is |
 |---|---|
-| `dsh-session-e45b7148.native.jsonl.zstd` | untouched session log written by DSH |
-| `dsh-session-e45b7148.jsonl` | same log, decompressed for review |
+| `dsh-session-e45b7148.native.jsonl.zstd` | main session, untouched log written by DSH |
+| `dsh-session-e45b7148.jsonl` | main session, decompressed for review |
+| `dsh-session-1b259789.native.jsonl.zstd` | follow-up review session, untouched log |
+| `dsh-session-1b259789.jsonl` | follow-up review session, decompressed |
 | `session-index.csv` | one row per session: model, window, export, purpose, commits |
 | `decision-log.md` | accepted / corrected / tradeoff decisions with evidence |
 | `completeness-declaration.md` | tools used, export limitations, Section 6 boundary |
@@ -17,9 +20,12 @@ DSH keeps sessions under `~/.dsh/sessions/<workspace>/<session-id>/session.v4.js
 The decompressed copy was produced with:
 
 ```bash
-SESSION=~/.dsh/sessions/--Users-dyna-Documents-Job-ocean--/session-e45b7148-1eaf-41d9-b867-396867dcceda
-zstd -d -c "$SESSION/session.v4.jsonl.zstd" > ai/sessions/dsh-session-e45b7148.jsonl
-cp "$SESSION/session.v4.jsonl.zstd" ai/sessions/dsh-session-e45b7148.native.jsonl.zstd
+BASE=~/.dsh/sessions/--Users-dyna-Documents-Job-ocean--
+for ID in e45b7148-1eaf-41d9-b867-396867dcceda 1b259789-6a30-4bb2-b86b-5a4c6b690b06; do
+  SHORT=${ID%%-*}
+  zstd -d -c "$BASE/session-$ID/session.v4.jsonl.zstd" > "ai/sessions/dsh-session-$SHORT.jsonl"
+  cp "$BASE/session-$ID/session.v4.jsonl.zstd" "ai/sessions/dsh-session-$SHORT.native.jsonl.zstd"
+done
 ```
 
 The log is append-only JSONL: one event per line, with `seq` and epoch-millisecond `time`

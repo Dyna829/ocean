@@ -44,7 +44,9 @@ A2 test fires six concurrent requests with one key and asserts exactly one
 `operationId`, one `Idempotency-Replayed: false`, five `true`, `+2` certificates and `+2`
 audit events; A3 asserts `409 idempotency_key_reuse` with certificate and audit counts
 unchanged, and that the original result is still replayable. Two further A3 tests cover
-the audit `reason` becoming part of the hash (different reason → 409; blank reason replays).
+the audit `reason` becoming part of the hash (different reason → 409; blank reason replays);
+that refinement was made in the follow-up session `session-1b259789-…`, whose export is in
+`ai/sessions/`.
 
 ## D2 — Accepted: snapshot names on the certificate and stream exports in keyset batches
 

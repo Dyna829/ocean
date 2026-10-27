@@ -6,11 +6,13 @@ This declaration covers every AI tool used to produce this submission.
 
 | Tool | Version / configuration | Model | Sessions | Native export |
 |---|---|---|---|---|
-| DeepSeek Harness (DSH) desktop app | `standard` agent preset, approval policy `ask`, file policy `workspace-write` | `deepseek-flash` | 1 (`session-e45b7148-1eaf-41d9-b867-396867dcceda`) | `ai/sessions/dsh-session-e45b7148.jsonl` (+ untouched `.native.jsonl.zstd`) |
+| DeepSeek Harness (DSH) desktop app | `standard` agent preset, approval policy `ask`, file policy `workspace-write` | `deepseek-flash` | 2 (`session-e45b7148-1eaf-41d9-b867-396867dcceda`, `session-1b259789-6a30-4bb2-b86b-5a4c6b690b06`) | `ai/sessions/dsh-session-e45b7148.jsonl`, `ai/sessions/dsh-session-1b259789.jsonl` (+ untouched `.native.jsonl.zstd` for both) |
 
-No other AI tool, agent, or autocomplete service was used for the planning, implementation,
-testing, or documentation of this repository. No inline editor completion was active during
-the session.
+Two sessions were used: the main build session (12:24–13:42 +08:00) and a short follow-up
+review session (13:30–13:32 +08:00) that examined the idempotency implementation and put the
+audit reason into the request hash. Both are exported; no other AI tool, agent, or autocomplete
+service was used for the planning, implementation, testing, or documentation of this
+repository. No inline editor completion was active during either session.
 
 > Candidate: if any AI assistance outside this session was used, add it to the table above
 > before submitting.
@@ -20,10 +22,11 @@ the session.
 The native DSH session log is a JSONL event stream (format version 4, zstd-compressed on
 disk). Both forms are included:
 
-- `ai/sessions/dsh-session-e45b7148.native.jsonl.zstd` — the untouched file written by the
+- `ai/sessions/dsh-session-e45b7148.native.jsonl.zstd` and
+  `ai/sessions/dsh-session-1b259789.native.jsonl.zstd` — the untouched files written by the
   harness.
-- `ai/sessions/dsh-session-e45b7148.jsonl` — the same bytes decompressed with
-  `zstd -d` for review.
+- `ai/sessions/dsh-session-e45b7148.jsonl` and `ai/sessions/dsh-session-1b259789.jsonl` —
+  the same bytes decompressed with `zstd -d` for review.
 
 The stream contains, with epoch-millisecond timestamps and sequence numbers:
 
@@ -45,9 +48,10 @@ evidence" file was needed.
 2. The export is event-oriented, not a terminal scrollback: command output appears inside
    `tool/result` events rather than as a continuous terminal log. This is the native
    format, not a reduction.
-3. The session was still open when the export was taken; the file ends at the packaging
-   step. `ai/session-index.csv` records the export window. Later events (if any) would need
-   a refreshed export — re-run the command in `ai/README.md`.
+3. The main session was still open when the export was taken, so it ends at the packaging
+   step; the follow-up session is complete. `ai/session-index.csv` records both windows.
+   Later main-session events would need a refreshed export — re-run the command in
+   `ai/README.md`.
 4. No credentials, tokens, or third-party personal data were present, so no
    `[REDACTED: ...]` replacements were necessary.
 5. Dependency caches (`.venv`, `web/node_modules`) and the generated 100k database are not
