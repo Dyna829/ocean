@@ -1,22 +1,25 @@
 # Decision log
 
 Material decisions made while building this submission, including the AI suggestions that
-were accepted, corrected, and the scope tradeoffs taken. All work happened in a single
-DeepSeek Harness session (`session-e45b7148-1eaf-41d9-b867-396867dcceda`, model
-`deepseek-flash`), exported to `ai/sessions/dsh-session-e45b7148.jsonl`.
+were accepted, corrected, and the scope tradeoffs taken. They came from two DeepSeek
+Harness sessions, both model `deepseek-flash`: the main build session
+(`session-e45b7148-1eaf-41d9-b867-396867dcceda`, 12:24–14:07 +08:00) and a short follow-up
+review (`session-1b259789-6a30-4bb2-b86b-5a4c6b690b06`, 13:30–13:32 +08:00). D2–D8 are from
+the main session; D1's reason-hash refinement is from the follow-up. Exports are in
+`ai/sessions/`.
 
 Time zone for every timestamp below: Asia/Singapore (+08:00), 2026-10-27.
 
-| # | Type | Decision | Commits |
-|---|---|---|---|
-| D1 | accepted | Database-enforced idempotency instead of an in-process lock | `b94ac80`, `6b05ddb` |
-| D2 | accepted | Name snapshots + keyset streaming export | `b94ac80`, `6b05ddb` |
-| D3 | corrected | Async generator iterated synchronously in the A6 test | `6b05ddb` |
-| D4 | corrected | `start.sh` assumed bash 4 empty-array semantics | `ebb8485` |
-| D5 | tradeoff | SQLite single-writer + synchronous bulk issue, no queue | `b94ac80`, `0f6674e` |
-| D6 | tradeoff | Pinned Vite 7 / TypeScript 5.9 instead of the newest majors | `48c2938` |
-| D7 | accepted | Leveled structured logging with a shared request id | `dfbeee4` |
-| D8 | corrected | Export was super-linear at 1M rows; two-step keyset fixed it | `3db3bda` |
+| # | Type | Decision | Session | Commits |
+|---|---|---|---|---|
+| D1 | accepted | Database-enforced idempotency instead of an in-process lock | `session-e45b7148`, `session-1b259789` | `b94ac80`, `6b05ddb` |
+| D2 | accepted | Name snapshots + keyset streaming export | `session-e45b7148` | `b94ac80`, `6b05ddb` |
+| D3 | corrected | Async generator iterated synchronously in the A6 test | `session-e45b7148` | `6b05ddb` |
+| D4 | corrected | `start.sh` assumed bash 4 empty-array semantics | `session-e45b7148` | `ebb8485` |
+| D5 | tradeoff | SQLite single-writer + synchronous bulk issue, no queue | `session-e45b7148` | `b94ac80`, `0f6674e` |
+| D6 | tradeoff | Pinned Vite 7 / TypeScript 5.9 instead of the newest majors | `session-e45b7148` | `48c2938` |
+| D7 | accepted | Leveled structured logging with a shared request id | `session-e45b7148` | `dfbeee4` |
+| D8 | corrected | Export was super-linear at 1M rows; two-step keyset fixed it | `session-e45b7148` | `3db3bda` |
 
 ---
 

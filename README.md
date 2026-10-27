@@ -381,6 +381,7 @@ docs/                briefing, design screenshots
 ai/                  AI interaction evidence (sessions, index, decision log)
 AGENTS.md            AI instructions used for this repository
 DESIGN.md            data model, API contract, tradeoffs
+written-answers.md   Section 6 written answers (candidate, no AI)
 ```
 
 ## 10. Known defects and unfinished work

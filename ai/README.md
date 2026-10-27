@@ -1,8 +1,8 @@
 # AI session evidence
 
-Two AI sessions produced this submission, both DeepSeek Harness (DSH) with the
+Two AI sessions produced the build, both DeepSeek Harness (DSH) with the
 `deepseek-flash` model on 2026-10-27 (Asia/Singapore): the main build session
-(12:24–13:42) and a short follow-up review of idempotency edge cases (13:30–13:32).
+(12:24–14:07) and a short follow-up review of idempotency edge cases (13:30–13:32).
 
 | File | What it is |
 |---|---|

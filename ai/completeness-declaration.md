@@ -8,7 +8,7 @@ This declaration covers every AI tool used to produce this submission.
 |---|---|---|---|---|
 | DeepSeek Harness (DSH) desktop app | `standard` agent preset, approval policy `ask`, file policy `workspace-write` | `deepseek-flash` | 2 (`session-e45b7148-1eaf-41d9-b867-396867dcceda`, `session-1b259789-6a30-4bb2-b86b-5a4c6b690b06`) | `ai/sessions/dsh-session-e45b7148.jsonl`, `ai/sessions/dsh-session-1b259789.jsonl` (+ untouched `.native.jsonl.zstd` for both) |
 
-Two sessions were used: the main build session (12:24–13:42 +08:00) and a short follow-up
+Two sessions were used: the main build session (12:24–14:07 +08:00) and a short follow-up
 review session (13:30–13:32 +08:00) that examined the idempotency implementation and put the
 audit reason into the request hash. Both are exported; no other AI tool, agent, or autocomplete
 service was used for the planning, implementation, testing, or documentation of this
@@ -48,10 +48,8 @@ evidence" file was needed.
 2. The export is event-oriented, not a terminal scrollback: command output appears inside
    `tool/result` events rather than as a continuous terminal log. This is the native
    format, not a reduction.
-3. The main session was still open when the export was taken, so it ends at the packaging
-   step; the follow-up session is complete. `ai/session-index.csv` records both windows.
-   Later main-session events would need a refreshed export — re-run the command in
-   `ai/README.md`.
+3. The main session was re-exported after it closed (1808 events, ending at `turn/end`);
+   the follow-up session was already complete. `ai/session-index.csv` records both windows.
 4. No credentials, tokens, or third-party personal data were present, so no
    `[REDACTED: ...]` replacements were necessary.
 5. Dependency caches (`.venv`, `web/node_modules`) and the generated 100k database are not
@@ -60,13 +58,13 @@ evidence" file was needed.
 ## Section 6 — no-AI confirmation
 
 Section 6 (`written-answers.md`) is the only part of the assessment that must be produced
-without AI. It was **not** part of this session: the boundary comes from
-`docs/briefing.pdf` §6 and was restated to the assistant at the start of this session, which
-declined to draft, outline, summarise, translate, rephrase, proofread, or improve those
-answers.
+without AI. The candidate wrote it independently and confirmed completion on 2026-10-27; no
+AI tool produced or edited its content. The boundary comes from `docs/briefing.pdf` §6, and
+the assistant did not read, draft, outline, summarise, translate, rephrase, proofread, or
+improve the answers.
 
-- [ ] Candidate: confirm before submission that `written-answers.md` was written by you
-      alone, without AI assistance of any kind.
+- [x] Candidate: confirmed on 2026-10-27 that `written-answers.md` was written alone,
+      without AI assistance of any kind.
 
 ## Reproducing the evidence
 

@@ -293,8 +293,8 @@ the operation id.
 * `ai/completeness-declaration.md` — tools used, export limitations, Section 6 statement.
 * `AGENTS.md` — the instruction file used for this repository.
 
-`written-answers.md` (Section 6) is completed by the candidate without AI and is never
-touched by these sessions.
+`written-answers.md` (Section 6) is written by the candidate without AI; its content is
+never edited by these sessions.
 
 ## 10. Risks and tradeoffs
 
