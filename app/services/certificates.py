@@ -61,18 +61,20 @@ def _filters(tenant_id: str, q: str) -> tuple[list[str], list[Any]]:
     return clauses, params
 
 
+# The index that provides the requested order; used as an explicit planner hint so a
+# residual filter (search, export horizon) cannot divert the scan into a temp sort.
+SORT_INDEXES = {
+    "issued_date": "idx_cert_tenant_issued",
+    "learner_name": "idx_cert_tenant_learner",
+    "course_title": "idx_cert_tenant_course",
+    "serial": "idx_cert_tenant_serial",
+}
+
+
 def _order_by(sort: str, direction: str) -> str:
     expr = SORT_COLUMNS[sort]
-    return f"ORDER BY {expr} {direction.upper()}, c.id ASC"
-
-
-def _keyset(expr: str, direction: str, last: tuple[str, str] | None) -> tuple[str, list[Any]]:
-    """Keyset predicate matching ORDER BY {expr} {dir}, c.id ASC."""
-    if last is None:
-        return "", []
-    operator = ">" if direction == "asc" else "<"
-    clause = f"(({expr}) {operator} ? OR (({expr}) = ? AND c.id > ?))"
-    return clause, [last[0], last[0], last[1]]
+    suffix = direction.upper()
+    return f"ORDER BY {expr} {suffix}, c.id {suffix}"
 
 
 def _item(row: sqlite3.Row, timezone: str) -> dict[str, Any]:
@@ -329,9 +331,17 @@ def revoke_certificate(
     return {**detail, "alreadyRevoked": False, "revokedAt": now}
 
 
-def _request_hash(course_id: str) -> str:
-    payload = json.dumps({"endpoint": "bulk-issue", "courseId": course_id}, sort_keys=True)
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+def _request_hash(course_id: str, reason: str | None) -> str:
+    """Canonical request identity for A3: the course, plus the reason when one is given.
+
+    A missing reason is omitted instead of serialised as null. That keeps rows written
+    before `reason` became part of the hash byte-identical, so an in-flight retry of an
+    old key still replays instead of turning into a spurious 409.
+    """
+    payload: dict[str, Any] = {"endpoint": "bulk-issue", "courseId": course_id}
+    if reason:
+        payload["reason"] = reason
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def _next_sequence(conn: sqlite3.Connection, tenant_id: str) -> int:
@@ -364,7 +374,10 @@ def bulk_issue(
     if len(key) > 200:
         raise ApiError(400, "idempotency_key_invalid", "Idempotency-Key is too long")
 
-    request_hash = _request_hash(course_id)
+    # A blank reason is no reason: hash and audit the trimmed form, so "", "   " and an
+    # absent reason are one request rather than three.
+    reason = (reason or "").strip() or None
+    request_hash = _request_hash(course_id, reason)
     operation_id = f"op_{secrets.token_hex(8)}"
     key_hash = hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
     started = time.perf_counter()
@@ -423,6 +436,11 @@ def bulk_issue(
                     },
                 )
                 return 200, json.loads(existing["response_json"]), True
+            # Unreachable today by construction: the key row is only ever inserted as
+            # SUCCEEDED, inside the same transaction as the write set, so a competing
+            # reader either misses the row (and blocks on the write lock) or sees 200.
+            # Keep the branch for the day bulk issue becomes an async task; then this
+            # status needs a stale-row recovery path, or a crashed job wedges the key.
             raise ApiError(
                 409,
                 "idempotency_key_in_progress",
@@ -645,25 +663,53 @@ def export_batch(
     last: tuple[str, str] | None,
     limit: int = EXPORT_BATCH_SIZE,
 ) -> list[sqlite3.Row]:
+    """One keyset page in two index seeks.
+
+    A single ``(sort_key, id) > (?, ?)`` predicate is not pushed into the index by
+    SQLite when the key is a collated expression with duplicates, which degrades the
+    export to a full scan per batch. So we first drain the current sort key with
+    ``key = ? AND id > ?`` (index seek) and only then jump to ``key > ?``. Both
+    queries are ordered ``key dir, id dir`` so the result is one total order (A6).
+    """
     expr = SORT_COLUMNS[sort]
+    index = SORT_INDEXES[sort]
+    operator = ">" if direction == "asc" else "<"
+    order = f"{expr} {direction.upper()}, c.id {direction.upper()}"
+
     clauses, params = _filters(actor.tenant_id, q)
     clauses.append("c.seq <= ?")
     params.append(horizon)
-    clause, key_params = _keyset(expr, direction, last)
-    if clause:
-        clauses.append(clause)
-        params.extend(key_params)
 
-    rows = db.conn.execute(
-        f"""
-        SELECT {CERT_COLUMNS}, ({expr}) AS sort_value
-          FROM certificates c
-         WHERE {' AND '.join(clauses)}
-         ORDER BY {expr} {direction.upper()}, c.id ASC
-         LIMIT ?
-        """,
-        [*params, limit],
-    ).fetchall()
+    def query(
+        extra: str, extra_params: list[Any], batch_limit: int, order_sql: str
+    ) -> list[sqlite3.Row]:
+        where = " AND ".join([*clauses, extra] if extra else clauses)
+        return db.conn.execute(
+            f"""
+            SELECT {CERT_COLUMNS}, ({expr}) AS sort_value
+              FROM certificates c INDEXED BY {index}
+             WHERE {where}
+             ORDER BY {order_sql}
+             LIMIT ?
+            """,
+            [*params, *extra_params, batch_limit],
+        ).fetchall()
+
+    if last is None:
+        return query("", [], limit, order)
+
+    # Drain the current sort key first (index seek inside one key group), then jump
+    # to the next key. Ordering by id is only valid while the key is fixed.
+    rows = query(
+        f"({expr}) = ? AND c.id {operator} ?",
+        [last[0], last[1]],
+        limit,
+        f"c.id {direction.upper()}",
+    )
+    if len(rows) < limit:
+        rows.extend(
+            query(f"({expr}) {operator} ?", [last[0]], limit - len(rows), order)
+        )
     return rows
 
 

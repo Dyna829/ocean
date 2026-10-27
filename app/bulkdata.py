@@ -104,6 +104,13 @@ def insert_bulk_certificates(
     if tenant is None:
         raise ValueError(f"unknown tenant {tenant_id}")
 
+    capacity = course_count * learner_count
+    if count > capacity:
+        raise ValueError(
+            f"count={count} exceeds course_count*learner_count={capacity}; "
+            "increase course_count or learner_count"
+        )
+
     start_seq = conn.execute(
         "SELECT COALESCE(MAX(seq), 0) AS n FROM certificates WHERE tenant_id = ?",
         (tenant_id,),

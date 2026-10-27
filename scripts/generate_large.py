@@ -11,6 +11,7 @@ The default quick-start dataset is never touched: this writes a separate file
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from pathlib import Path
 
@@ -32,6 +33,13 @@ def main() -> None:
     )
     parser.add_argument("--tenant", default="east", help="tenant slug: east or west")
     parser.add_argument("--count", type=int, default=100_000, help="certificates to add")
+    parser.add_argument("--learners", type=int, default=1000, help="distinct learners per course set")
+    parser.add_argument(
+        "--courses",
+        type=int,
+        default=0,
+        help="distinct courses (default: max(100, ceil(count/learners)))",
+    )
     parser.add_argument("--force", action="store_true", help="overwrite the target database")
     args = parser.parse_args()
 
@@ -45,14 +53,23 @@ def main() -> None:
             Path(str(path) + suffix).unlink(missing_ok=True)
 
     tenant_id = f"tenant_{args.tenant}"
+    course_count = args.courses or max(100, math.ceil(args.count / args.learners))
+
     database = Database(path)
     database.init_schema()
     seed_demo(database)
     with database.write() as conn:
-        summary = insert_bulk_certificates(conn, tenant_id=tenant_id, count=args.count)
+        summary = insert_bulk_certificates(
+            conn,
+            tenant_id=tenant_id,
+            count=args.count,
+            course_count=course_count,
+            learner_count=args.learners,
+        )
 
     print(
-        f"Seeded {summary['certificates']:,} certificates for {args.tenant} into {path}\n"
+        f"Seeded {summary['certificates']:,} certificates for {args.tenant} into {path} "
+        f"({summary['courses']} courses x {summary['learners']} learners)\n"
         f"Run the app against it:\n"
         f"  DB_PATH={path} ./start.sh\n"
         f"Then export from the UI or:\n"
